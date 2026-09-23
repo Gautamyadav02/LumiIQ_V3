@@ -96,8 +96,10 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
 
 ## 🛠 Features
 
-1. **Gaze-Dwell Clicking** — dwell on any `.gazeable` element; a conic progress ring
-   sweeps and auto-clicks at 100%.
+1. **Gaze selection** — look at a target until the progress ring completes (dwell), or
+   look at it and close your eyes deliberately for about 0.5 s (blink to select). The
+   caregiver chooses "dwell or blink", "dwell only" or "blink only". To repeat a key,
+   look away and back, or blink again.
 2. **Virtual QWERTY Keyboard** — word predictions and spelling suggestions (never
    applied automatically), **Nurse Call**, and a **SPEAK** key (bilingual TTS).
 3. **Anatomical Body Map** — SVG zones (Head, Eyes, Throat, Chest, Stomach, Arms, Legs,

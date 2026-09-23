@@ -75,6 +75,9 @@ SETTINGS_SCHEMA = {
     "voiceLanguage":   ("choice", {"en-US", "en-GB", "hi-IN"}),
     "alarmVolume":     ("number", (0.0, 1.0)),
     "faceLostAlarmSec": ("number", (5, 120)),
+    "selectionMode":   ("choice", {"both", "dwell", "blink"}),
+    "blinkSelectMs":   ("number", (300, 1200)),
+    "dwellRepeat":     ("bool", None),
     "swapEyes":        ("bool", None),
 }
 
@@ -89,6 +92,9 @@ DEFAULT_SETTINGS = {
     "voiceLanguage": "en-US",
     "alarmVolume": 0.7,
     "faceLostAlarmSec": 10,
+    "selectionMode": "both",      # select by dwell or by a deliberate blink
+    "blinkSelectMs": 500,         # eyes closed at least this long = a deliberate blink
+    "dwellRepeat": False,         # keep looking at a key to repeat it
     "swapEyes": False,
 }
 

@@ -545,7 +545,7 @@ const EyeApp = {
                 const key = e.target.id.replace('set_', '');
                 let val   = e.target.value;
                 if (e.target.type === 'range') val = parseFloat(val);
-                if (key === 'swapEyes')        val = (val === 'true');
+                if (key === 'swapEyes' || key === 'dwellRepeat') val = (val === 'true');
                 LumiStore.updateSetting(key, val);
                 const valEl = document.getElementById(`${e.target.id}_val`);
                 if (valEl) valEl.textContent = val;
@@ -568,6 +568,9 @@ const EyeApp = {
         set('set_earThreshold',      s.earThreshold);
         set('set_alarmVolume',       s.alarmVolume !== undefined ? s.alarmVolume : 0.5);
         set('set_faceLostAlarmSec',  s.faceLostAlarmSec !== undefined ? s.faceLostAlarmSec : 10);
+        set('set_blinkSelectMs',     s.blinkSelectMs !== undefined ? s.blinkSelectMs : 500);
+        set('set_selectionMode',     s.selectionMode || 'both');
+        set('set_dwellRepeat',       s.dwellRepeat ? 'true' : 'false');
         set('set_voiceRate',         s.voiceRate !== undefined ? s.voiceRate : 0.95);
         set('set_voicePitch',        s.voicePitch !== undefined ? s.voicePitch : 1.0);
         set('set_voiceVolume',       s.voiceVolume !== undefined ? s.voiceVolume : 1.0);

@@ -64,6 +64,16 @@ const LumiGaze = {
     _hiddenSince: null,           // when the page was hidden while tracking
     _pageListenersBound: false,
 
+    // Blink to select: look at a target, then close the eyes deliberately for at
+    // least settings.blinkSelectMs (default 500 ms) but less than this maximum.
+    // Normal blinks (~100-400 ms) are shorter; closures of 3 s raise an alarm.
+    BLINK_SELECT_MAX_MS: 1500,
+    BLINK_SETTLE_MS: 300,         // the gaze must have rested on a target this long
+    BLINK_LOOKBACK_MS: 300,       // …within this long before the eyes closed (lid-closing drags the estimate)
+    _gazeOn: { target: null, since: 0 },   // target under the gaze, and since when
+    _settled: null,               // { target, at }: last target the gaze had rested on
+    _blinkCandidate: null,        // target to select if the current closure is a deliberate blink
+
     // Callbacks (wired by app.js)
     onGazeUpdate: null,          // (x, y, eyeMode, state)
     onBlink: null,               // (whichEye)
@@ -256,6 +266,7 @@ const LumiGaze = {
         if (this.videoElement) this.videoElement.srcObject = null;
         if (this.stabilizer) this.stabilizer.reset();
         if (this.dwell) this.dwell.cancel();
+        this._settled = null;
         this.updateStatus('Tracking stopped.', 'info');
         this._notice('Eye monitoring is OFF: the camera is stopped, so no alarms can be raised.', 'warning');
     },
@@ -522,8 +533,36 @@ const LumiGaze = {
         if (this._avgConfidence < 0.4) dynamicDwell *= 2.0;
         else if (this._avgConfidence < 0.7) dynamicDwell *= 1.3;
 
+        const now = performance.now();
+        this._trackSettledTarget(pt, now);
+        this.dwell.setParams({
+            // "Blink only": the ring fills to show the target is armed; the blink selects.
+            autoActivate: this._selectionMode(settings) !== 'blink',
+            repeatWhileLooking: settings.dwellRepeat === true,
+        });
         this.dwell.setDwellTime(dynamicDwell);
-        this.dwell.update(pt.x, pt.y, performance.now());
+        this.dwell.update(pt.x, pt.y, now);
+    },
+
+    /** 'both' (dwell or blink, default), 'dwell' or 'blink'. */
+    _selectionMode(settings) {
+        return settings.selectionMode || 'both';
+    },
+
+    /** Remember which target the gaze has rested on, for blink selection. */
+    _trackSettledTarget(pt, now) {
+        const hit = this._hitTest(pt.x, pt.y);
+        if (hit !== this._gazeOn.target) this._gazeOn = { target: hit, since: now };
+        if (hit && now - this._gazeOn.since >= this.BLINK_SETTLE_MS) this._settled = { target: hit, at: now };
+    },
+
+    /** A deliberate blink ended: select the target the gaze had rested on. */
+    _blinkSelect(now) {
+        const target = this._blinkCandidate;
+        this._blinkCandidate = null;
+        if (!target || !this.isCalibrated || this.isCalibrating || target.isConnected === false) return;
+        this.dwell.markActivated(target, now);   // so dwell does not click it again at once
+        if (this.onDwellClick) this.onDwellClick(target);
     },
 
     /** Rough uncalibrated mapping so the cursor is usable before calibration. */
@@ -565,8 +604,15 @@ const LumiGaze = {
             (settings.activeEye === 'right' && !fx.rOpen);
 
         const now = performance.now();
+        const blinkSelectOn = this._selectionMode(settings) !== 'dwell';
+        const blinkSelectMs = settings.blinkSelectMs || 500;
         if (activeClosed) {
-            if (this.eyesClosedSince === null) this.eyesClosedSince = now;
+            if (this.eyesClosedSince === null) {
+                this.eyesClosedSince = now;
+                // The target to select if this turns out to be a deliberate blink.
+                this._blinkCandidate = this._settled && now - this._settled.at <= this.BLINK_LOOKBACK_MS
+                    ? this._settled.target : null;
+            }
             const dur = (now - this.eyesClosedSince) / 1000;
             // One alarm per closure: the siren keeps sounding until a caregiver
             // dismisses it; a new alarm needs the eyes to open and close again.
@@ -576,7 +622,12 @@ const LumiGaze = {
             }
         } else if (this.eyesClosedSince !== null) {
             const d = now - this.eyesClosedSince;
-            if (d > 50 && d < 800) this._registerBlink(fx.eyeMode);
+            if (blinkSelectOn && d >= blinkSelectMs && d <= this.BLINK_SELECT_MAX_MS) {
+                this._blinkSelect(now);       // deliberate blink: select, don't count as a blink
+            } else if (d > 50 && d < (blinkSelectOn ? Math.min(800, blinkSelectMs) : 800)) {
+                this._registerBlink(fx.eyeMode);
+            }
+            this._blinkCandidate = null;
             this.eyesClosedSince = null;
             this._closureAlarmed = false;
         }
@@ -611,6 +662,7 @@ const LumiGaze = {
     startCalibration(pointCount = 9) {
         this._calibRun = new GazeCalibration();
         this._pendingCalibration = null;
+        this._settled = null;
         this.calibTarget = this._calibRun.begin(pointCount);
         this.isCalibrating = true;
         this.updateStatus(`Calibration started — ${pointCount} points. Look at the target.`, 'info');

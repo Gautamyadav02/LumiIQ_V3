@@ -50,7 +50,14 @@ const LumiBodyMap = {
         const el = document.getElementById(containerId);
         if (!el) return;
         const zones = this.PARTS.filter(p => p.cx !== undefined);
-        const dwellSecs = ((LumiStore.getSettings().dwellTimeMs || 1200) / 1000).toFixed(1);
+        const settings = LumiStore.getSettings();
+        const dwellSecs = ((settings.dwellTimeMs || 1200) / 1000).toFixed(1);
+        const blinkSecs = ((settings.blinkSelectMs || 500) / 1000).toFixed(1);
+        const howToSelect = {
+            dwell: `look at a body part for ${dwellSecs} seconds`,
+            blink: `look at a body part and close your eyes for ${blinkSecs} seconds`,
+            both:  `look at a body part for ${dwellSecs} seconds, or close your eyes on it for ${blinkSecs} seconds`,
+        }[settings.selectionMode || 'both'];
         el.innerHTML = `
         <div class="bodymap-layout">
 
@@ -88,7 +95,7 @@ const LumiBodyMap = {
                     Back — पीठ
                     <span class="dwell-progress-ring"></span>
                 </button>
-                <p class="hint-text">👁 Look at a body part for ${dwellSecs} seconds to select it</p>
+                <p class="hint-text">👁 To select, ${howToSelect}</p>
             </div>
 
             <!-- RIGHT: Symptom panel -->

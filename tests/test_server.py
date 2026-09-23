@@ -179,6 +179,15 @@ class SettingsTests(ServerCase):
                 body = json.dumps(patch)   # json.dumps writes NaN, which Python's json accepts back
                 self.assertEqual(self.request("PUT", "/api/settings", body)[0], 400)
 
+    def test_selection_settings_are_validated(self):
+        ok = {"selectionMode": "blink", "blinkSelectMs": 600, "dwellRepeat": True}
+        self.assertEqual(self.json_request("PUT", "/api/settings", ok)[0], 200)
+        _, settings = self.json_request("GET", "/api/settings")
+        self.assertEqual({k: settings[k] for k in ok}, ok)
+        for bad in [{"selectionMode": "wink"}, {"blinkSelectMs": 5000}, {"dwellRepeat": "yes"}]:
+            with self.subTest(bad=bad):
+                self.assertEqual(self.json_request("PUT", "/api/settings", bad)[0], 400)
+
     def test_unknown_keys_are_ignored(self):
         self.json_request("PUT", "/api/settings", {"gazeSensitivityX": 2, "evil": "<script>"})
         _, settings = self.json_request("GET", "/api/settings")

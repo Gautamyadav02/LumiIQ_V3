@@ -8,10 +8,34 @@ findings in [AUDIT.md](AUDIT.md). The original app is preserved as git tag **`Lu
 Every fix has a regression test, written first and seen to fail on the old code. `npm test` runs:
 - 32 gaze unit tests;
 - the smoke test;
-- 84 Node tests (83 pass, 1 recorded as a known limitation);
-- 24 server tests.
+- 99 Node tests (98 pass, 1 recorded as a known limitation);
+- 25 server tests.
 
 It needs nothing installed.
+
+### Added — blink to select ("blink to write"), at the user's request
+
+- **How it works.** Look at a key (or any gaze target), then close your eyes deliberately for at
+  least 0.5 s, and less than 1.5 s. The target the gaze had rested on is selected. Blinking again
+  selects it again, which is the easy way to type a double letter.
+- **What doesn't select.** Normal blinks (~0.1–0.4 s) don't select. Closures of 3 s or more still
+  raise the eyes-closed alarm.
+- **Guards:**
+  - the gaze must have rested on the target for 300 ms first, so a key the gaze merely passes is
+    never selected;
+  - the target from just before the eyelids closed is used, because the closing lid drags the
+    estimate;
+  - no blink selection happens before a calibration is accepted or during calibration;
+  - deliberate blinks don't count towards the rapid-blinking alarm.
+- **Caregiver settings:**
+  - "Select with": Dwell or blink (default), Dwell only, or Blink only. In Blink only mode the ring
+    fills to show the target is armed.
+  - "Blink-select: eyes closed for (ms)": 300–1200, default 500.
+  - "Keep looking to repeat a key": off by default, so to repeat you look away and back, or blink.
+- **Risk to measure in Phase 1:** a slow involuntary blink while resting the eyes on a key can now
+  select it. Phase 1 should count false selections with blink-select on and off.
+- Tests: `tests/blink-select.test.js` (12), plus dwell-controller tests for the new options and a
+  server test for the new settings.
 
 ### Critical
 
@@ -132,17 +156,17 @@ These change gaze accuracy or dwell behaviour, so each needs a before/after numb
 evaluation harness. Because V1 is tagged, the Phase 1 baseline can still be recorded on the
 original code.
 
-### Design decisions made in these fixes — please confirm or change
+### Design decisions (user's answers, 2026-09-23)
 
-1. Urgent phrases sound the alarm (M9). Which phrases should?
-2. The face-lost alarm fires after 10 s by default (H3).
-3. Repeating a letter requires looking away and back (M3).
-4. There is one eyes-closed alarm per closure, and no rest/sleep mode yet (M11). A sleeping
-   patient still triggers one alarm per closure.
-5. Gaze clicks stay off until a calibration is accepted (M5).
-6. Body map: "Back" is now a separate button (H5). The left/right convention is **unchanged**:
-   "Left Arm" is drawn on the viewer's left, like a mirror, so it is the patient's left only if
-   they read the diagram as a mirror. Worth confirming with users.
+1. Urgent phrases sound the alarm (M9): **confirmed**.
+2. The face-lost alarm fires after 10 s, adjustable 5–60 s (H3): **confirmed**.
+3. Repeating a letter (M3): look away and back is **optional**. Blink to select was added (above),
+   and "keep looking to repeat" is a setting.
+4. There is one eyes-closed alarm per closure, and no rest/sleep mode yet (M11): **still open**. A
+   sleeping patient still triggers one alarm per closure.
+5. Gaze clicks stay off until a calibration is accepted (M5): **confirmed**.
+6. Body map: "Back" is a separate button, and the mirror left/right convention is unchanged (H5):
+   **confirmed**.
 
 ### Not verified here
 

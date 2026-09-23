@@ -25,6 +25,9 @@ const LumiStore = {
         voiceLanguage: 'en-US', // Default TTS voice locale
         alarmVolume: 0.7,       // Sirens and alarms volume (0.0 to 1.0)
         faceLostAlarmSec: 10,   // Alarm when no face is seen for this long while tracking
+        selectionMode: 'both',  // 'both' (dwell or blink), 'dwell' or 'blink'
+        blinkSelectMs: 500,     // Eyes closed at least this long (and < 1.5 s) = deliberate blink
+        dwellRepeat: false,     // Keep looking at a key to repeat it (else look away, or blink)
         swapEyes: false         // Swap left/right for mirrored webcams
     },
 

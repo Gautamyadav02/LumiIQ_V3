@@ -117,3 +117,28 @@ test('H1 (engine): losing the face mid-dwell cancels it', () => {
   feedFrames(ctx, 100, EYES_OPEN);
   assert.equal(ctx.fired.length, 0);
 });
+
+// ── Options added for blink-to-select (user decision after the audit) ──
+test('autoActivate=false: the ring fills to show the target is armed, but dwell never clicks', () => {
+  const c = controller({ autoActivate: false });
+  c.hold(160, 170, 5000);
+  assert.equal(c.log.fires.length, 0);
+  assert.equal(c.log.progress.at(-1), 1, 'ring stays full while the gaze stays');
+});
+
+test('repeatWhileLooking=true: keeping the gaze on a key repeats it (optional behaviour)', () => {
+  const c = controller({ repeatWhileLooking: true });
+  c.hold(160, 170, 10000);
+  assert.ok(c.log.fires.length >= 3, `fires=${c.log.fires.length}`);
+});
+
+test('markActivated: after a blink selection, dwell does not click the same key again until the gaze leaves', () => {
+  const c = controller();
+  c.hold(160, 170, 300);
+  c.d.markActivated('KEY', c.now);
+  c.hold(160, 170, 5000);
+  assert.equal(c.log.fires.length, 0);
+  c.hold(500, 500, 200);
+  c.hold(160, 170, 2000);
+  assert.equal(c.log.fires.length, 1);
+});

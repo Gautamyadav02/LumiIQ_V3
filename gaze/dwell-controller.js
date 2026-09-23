@@ -22,7 +22,13 @@
  *   • Cooldown + re-arm    — after an activation, nothing fires for `cooldown`
  *                            ms, and the same target (or the same screen area,
  *                            if the UI redrew it) cannot fire again until the
- *                            gaze has left it.
+ *                            gaze has left it — unless `repeatWhileLooking`.
+ *
+ * Options for blink-to-select (the engine decides when a blink selects):
+ *   • autoActivate: false  — the ring still fills to show the target is armed,
+ *                            but dwell alone never clicks ("blink only" mode).
+ *   • markActivated()      — record that something else (a blink) selected the
+ *                            target, so dwell does not click it again at once.
  *
  * The controller is UI-agnostic: it receives a `hitTest(x,y)` function and emits
  * callbacks; the app renders the progress ring and performs the click.
@@ -46,6 +52,10 @@
       // The most dwell time one sample may add, so a delayed frame (e.g. after a
       // blink) cannot jump the progress.
       this.maxStepMs = opts.maxStepMs != null ? opts.maxStepMs : 100;
+      // false: fill the ring but never click (selection is made by a blink instead)
+      this.autoActivate = opts.autoActivate !== false;
+      // true: keeping the gaze on a target repeats it after each cooldown
+      this.repeatWhileLooking = opts.repeatWhileLooking === true;
 
       this.hitTest = opts.hitTest || (() => null);
       // Optional target → {left, top, right, bottom}. With it, "re-arm on leave"
@@ -80,6 +90,8 @@
       if (opts.cooldown != null) this.cooldown = opts.cooldown;
       if (opts.adaptive != null) this.adaptive = opts.adaptive;
       if (opts.maxGapMs != null) this.maxGapMs = opts.maxGapMs;
+      if (opts.autoActivate != null) this.autoActivate = opts.autoActivate;
+      if (opts.repeatWhileLooking != null) this.repeatWhileLooking = opts.repeatWhileLooking;
     }
 
     /** Effective dwell time, shortened when the gaze is very steady. */
@@ -196,15 +208,29 @@
         this.progress = Math.min(1, this.progress + Math.min(dt, this.maxStepMs) / this._effectiveDwell());
         this.onProgress(target, this.progress);
 
-        if (this.progress >= 1) {
+        if (this.progress >= 1 && this.autoActivate) {
           const fired = target;
-          this.cooldownUntil = t + this.cooldown;
-          this.blocked = { target: fired, rect: this.getRect ? this.getRect(fired) : null };
-          this.onProgress(fired, 0);
-          this._reset();
+          this._afterActivation(fired, t);
           this.onActivate(fired);
         }
       }
+    }
+
+    /** Cooldown, then (unless repeating while looking) block the target until the gaze leaves it. */
+    _afterActivation(target, t) {
+      this.cooldownUntil = t + this.cooldown;
+      this.blocked = this.repeatWhileLooking ? null
+        : { target, rect: this.getRect ? this.getRect(target) : null };
+      if (this.target) this.onProgress(this.target, 0);
+      this._reset();
+    }
+
+    /**
+     * Record that `target` was selected another way (a deliberate blink), so dwell
+     * does not click it again straight away.
+     */
+    markActivated(target, t) {
+      this._afterActivation(target, t);
     }
 
     getState() { return this.state; }

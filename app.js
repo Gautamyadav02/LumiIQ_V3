@@ -11,6 +11,11 @@ const EyeApp = {
     sirenInterval: null,
     sirenPlaying: false,
     _audioUnlocked: false,
+    driftDetector: null,
+    // While an alarm is showing, or until _pillHoldUntil, gaze frames must not
+    // overwrite the status pill (they arrive ~30 times a second).
+    _alarmActive: false,
+    _pillHoldUntil: 0,
 
     _ensureAudioUnlocked() {
         if (this._audioUnlocked) return;
@@ -113,31 +118,29 @@ const EyeApp = {
     _onGazeUpdate(x, y, eye, state, conf) {
         const c = document.getElementById('gazeCursor');
         if (!c) return;
+        const pillFree = !this._alarmActive && performance.now() >= this._pillHoldUntil;
         if (x === null) {
             c.classList.add('hidden');
-            this.updatePill('No face detected', '');
+            const reason = { 'Face not detected': 'No face detected', 'Eyes closed': 'Eyes closed',
+                             low_confidence: 'Tracking paused (low confidence)', calibrating: 'Calibrating…' }[state];
+            if (pillFree) this.updatePill(reason || 'No gaze', state === 'calibrating' ? 'calibrating' : '');
             return;
         }
         c.classList.remove('hidden');
         c.style.left = `${x}px`;
         c.style.top  = `${y}px`;
         const label = eye === 'both' ? 'Both Eyes' : eye === 'left' ? 'Left Eye' : eye === 'right' ? 'Right Eye' : '–';
-        
-        if (conf !== undefined) {
-            if (conf < 0.4) {
-                document.body.classList.remove('low-confidence-moderate');
-                document.body.classList.add('low-confidence-severe');
-                this.updatePill(`Tracking: Poor (${Math.round(conf*100)}%)`, 'warning');
-            } else if (conf < 0.7) {
-                document.body.classList.remove('low-confidence-severe');
-                document.body.classList.add('low-confidence-moderate');
-                this.updatePill(`Tracking: Fair (${Math.round(conf*100)}%)`, 'active');
-            } else {
-                document.body.classList.remove('low-confidence-severe', 'low-confidence-moderate');
-                this.updatePill(`Tracking: ${label}`, 'active');
-            }
-        } else {
-            this.updatePill(`Tracking: ${label}`, 'active');
+
+        // Enlarge targets while tracking confidence is low.
+        const severe = conf !== undefined && conf < 0.4;
+        const moderate = conf !== undefined && conf >= 0.4 && conf < 0.7;
+        document.body.classList.toggle('low-confidence-severe', severe);
+        document.body.classList.toggle('low-confidence-moderate', moderate);
+
+        if (pillFree) {   // otherwise an alarm or held message stays visible
+            if (severe) this.updatePill(`Tracking: Poor (${Math.round(conf * 100)}%)`, 'warning');
+            else if (moderate) this.updatePill(`Tracking: Fair (${Math.round(conf * 100)}%)`, 'active');
+            else this.updatePill(`Tracking: ${label}`, 'active');
         }
 
         this._drawCanvasTarget();
@@ -173,13 +176,20 @@ const EyeApp = {
         const rect = el.getBoundingClientRect();
         const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         const pt = LumiGaze.stabilizer.last;
-        if (pt && this.driftDetector.onDwellActivate(pt, center, rect)) {
-            this.updatePill('⚠️ Calibration Drift Detected - Please Recalibrate', 'warning');
+        if (pt && this.driftDetector && this.driftDetector.onDwellActivate(pt, center, rect)) {
+            this._holdPill('⚠️ Calibration drift suspected — please recalibrate', 'alert', 10000);
         }
 
         // FIRE the actual click
-        el.click();
+        this._activate(el);
         this._ensureAudioUnlocked();
+    },
+
+    // HTML elements have click(); SVG elements (the body-map zones) do not, so
+    // dispatch the click event that a mouse click would produce.
+    _activate(el) {
+        if (typeof el.click === 'function') el.click();
+        else el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     },
 
     _onBlink(eye) {
@@ -191,6 +201,7 @@ const EyeApp = {
         const ov = document.getElementById('emergencyOverlay');
         const desc = document.getElementById('emergencyDesc');
         if (ov && desc) { desc.textContent = details; ov.classList.remove('hidden'); }
+        this._alarmActive = true;
         this.updatePill('⚠ EMERGENCY ALERT', 'alert');
         this._playSiren();
         // Already logged by LumiGaze._triggerEmergency — the single logging point.
@@ -252,6 +263,7 @@ const EyeApp = {
         const btn = document.getElementById('alarmDismissBtn');
         if (btn) btn.addEventListener('click', () => {
             document.getElementById('emergencyOverlay').classList.add('hidden');
+            this._alarmActive = false;
             this._stopSiren();
             this.updatePill(LumiGaze.isTracking ? 'Active' : 'Disconnected', LumiGaze.isTracking ? 'active' : '');
         });
@@ -431,7 +443,7 @@ const EyeApp = {
         if (note) note.textContent = report.r2 >= 0.8
             ? 'Tracking is ready. You can recalibrate any time from the Caregiver tab.'
             : 'Accuracy is modest. For better results use more points, improve lighting, and keep your head still.';
-        this.updatePill(`Calibrated ✓ ${report.rating}`, 'active');
+        this._holdPill(`Calibrated ✓ ${report.rating}`, 'active', 4000);
     },
 
     _ratingClass(rating) {
@@ -454,6 +466,8 @@ const EyeApp = {
         const dot  = document.getElementById('statusDot');
         const text = document.getElementById('statusText');
         if (!dot || !text) return;
+        if (text.textContent === msg && this._pillState === state) return; // called every frame
+        this._pillState = state;
         text.textContent = msg;
         dot.className = 'status-dot';
         if (state === 'active')      dot.classList.add('dot-active');
@@ -461,9 +475,22 @@ const EyeApp = {
         if (state === 'alert')       dot.classList.add('dot-alert');
     },
 
+    /** Show a message that gaze frames will not overwrite for `ms` milliseconds. */
+    _holdPill(msg, state, ms) {
+        this.updatePill(msg, state);
+        this._pillHoldUntil = performance.now() + ms;
+    },
+
     // ─────────────────────────────────────────────────────
     //  LOGS DASHBOARD
     // ─────────────────────────────────────────────────────
+    /** Escape text for use inside innerHTML: log entries come from the server
+     *  and must never be interpreted as HTML (AUDIT H7). */
+    _escape(value) {
+        return String(value).replace(/[&<>"']/g, (ch) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    },
+
     _refreshLogs() {
         const commBox  = document.getElementById('dashCommLogs');
         const alertBox = document.getElementById('dashAlertLogs');
@@ -473,14 +500,14 @@ const EyeApp = {
             const syms    = LumiStore.getSymptomLogs().map(s => ({ ...s, disp: `Symptom: ${s.bodyPart} — ${s.symptom}` }));
             const all     = [...typed, ...syms].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
             commBox.innerHTML = all.length
-                ? all.map(i => `<div class="log-item"><span>${i.disp}</span><span class="log-time">${new Date(i.timestamp).toLocaleTimeString()}</span></div>`).join('')
+                ? all.map(i => `<div class="log-item"><span>${this._escape(i.disp)}</span><span class="log-time">${this._escape(new Date(i.timestamp).toLocaleTimeString())}</span></div>`).join('')
                 : '<div class="log-empty">No records yet.</div>';
         }
 
         if (alertBox) {
             const alerts = LumiStore.getAlertLogs();
             alertBox.innerHTML = alerts.length
-                ? alerts.map(a => `<div class="log-item log-alert"><b>${a.type}</b><span>${a.details}</span><span class="log-time">${new Date(a.timestamp).toLocaleTimeString()}</span></div>`).join('')
+                ? alerts.map(a => `<div class="log-item log-alert"><b>${this._escape(a.type)}</b><span>${this._escape(a.details)}</span><span class="log-time">${this._escape(new Date(a.timestamp).toLocaleTimeString())}</span></div>`).join('')
                 : '<div class="log-empty">No alerts recorded.</div>';
         }
     },

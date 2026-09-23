@@ -80,7 +80,7 @@
                     </div>
                     <div class="dash-card">
                         <h3>Gaze Calibration</h3>
-                        <p class="muted-text">Run 5-point calibration to map your eye movements to the screen with precision.</p>
+                        <p class="muted-text">Run a 5- to 25-point calibration to map eye movements to screen positions.</p>
                         <button class="dash-btn" id="startCalibrationBtn">Calibrate Gaze Engine</button>
                         <div class="calib-status" id="calibStatusText">Status: Standby</div>
                     </div>
@@ -223,7 +223,7 @@
             <button class="cal-pt-btn" data-points="16">16</button>
             <button class="cal-pt-btn" data-points="25">25</button>
         </div>
-        <p class="cal-pointsel-hint" id="calibPointHint">9 points · ~25s · recommended</p>
+        <p class="cal-pointsel-hint" id="calibPointHint">9 points · ~14s · default</p>
         <button class="dash-btn" id="startCalibProgressBtn">Begin Calibration →</button>
     </div>
 
@@ -253,7 +253,7 @@
         </div>
         <p class="cal-result-note" id="crNote"></p>
         <div class="cal-result-actions">
-            <button class="dash-btn" id="acceptCalibBtn">Accept &amp; Start Tracking</button>
+            <button class="dash-btn" id="acceptCalibBtn">Accept &amp; Use This Calibration</button>
             <button class="dash-btn ghost" id="recalibBtn">Recalibrate</button>
         </div>
     </div>

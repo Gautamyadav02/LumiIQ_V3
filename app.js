@@ -140,7 +140,8 @@ const EyeApp = {
         document.body.classList.toggle('low-confidence-moderate', moderate);
 
         if (pillFree) {   // otherwise an alarm or held message stays visible
-            if (severe) this.updatePill(`Tracking: Poor (${Math.round(conf * 100)}%)`, 'warning');
+            if (state === 'uncalibrated') this.updatePill('Not calibrated — gaze clicks off', 'calibrating');
+            else if (severe) this.updatePill(`Tracking: Poor (${Math.round(conf * 100)}%)`, 'warning');
             else if (moderate) this.updatePill(`Tracking: Fair (${Math.round(conf * 100)}%)`, 'active');
             else this.updatePill(`Tracking: ${label}`, 'active');
         }
@@ -301,8 +302,11 @@ const EyeApp = {
         // Point-count selector
         this._calibPoints = 9;
         const hint = document.getElementById('calibPointHint');
-        const hintText = { 5: '5 points · ~14s · fastest', 9: '9 points · ~25s · recommended',
-                           16: '16 points · ~44s · high accuracy', 25: '25 points · ~68s · maximum' };
+        const perPointSec = (this._SETTLE_MS + this._CAPTURE_MS) / 1000;
+        const note = { 5: 'fastest', 9: 'default', 16: 'more points', 25: 'most points' };
+        const hintText = {};
+        for (const n of [5, 9, 16, 25]) hintText[n] = `${n} points · ~${Math.round(n * perPointSec)}s · ${note[n]}`;
+        if (hint) hint.textContent = hintText[this._calibPoints];
         document.querySelectorAll('.cal-pt-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.cal-pt-btn').forEach(b => b.classList.remove('active'));
@@ -330,12 +334,17 @@ const EyeApp = {
 
         document.getElementById('exitCalibBtn')?.addEventListener('click', () => this._exitCalib());
         document.getElementById('recalibBtn')?.addEventListener('click', () => {
+            LumiGaze.discardCalibration();   // the previous calibration stays in use
             document.getElementById('calibResults').classList.add('hidden');
             document.getElementById('calibIntro').classList.remove('hidden');
         });
         document.getElementById('acceptCalibBtn')?.addEventListener('click', () => {
             document.getElementById('calibOverlay').classList.add('hidden');
-            this.updatePill('Calibrated ✓', 'active');
+            if (LumiGaze.acceptCalibration()) {
+                this._holdPill(`Calibrated ✓ ${LumiGaze.calibration.report.rating}`, 'active', 4000);
+            } else {
+                this.updatePill(LumiGaze.isCalibrated ? 'Previous calibration in use' : 'Not calibrated', '');
+            }
         });
 
         // Keyboard escape hatch for the caregiver during calibration.
@@ -398,15 +407,24 @@ const EyeApp = {
                 this._calibTimer = null;
                 if (dot) dot.classList.remove('capturing');
                 if (fill) fill.style.background = 'conic-gradient(transparent 0deg, transparent 360deg)';
-                const res = LumiGaze.captureCalibrationPoint();
-                if (res.error === 'insufficient') {
-                    // Not enough clean frames (face lost / blinking) — retry this point.
-                    if (hint) hint.textContent = 'Missed it — let’s try that point again.';
-                    setTimeout(() => this._beginCalibCapture(LumiGaze.calibTarget || target), 600);
-                } else if (res.done) {
-                    // onCalibrationComplete handles the results screen.
-                } else if (res.target) {
-                    this._beginCalibCapture(res.target);
+                const finish = () => {
+                    const res = LumiGaze.captureCalibrationPoint();
+                    if (res.error === 'insufficient') {
+                        // Not enough clean frames (face lost / blinking) — retry this point.
+                        if (hint) hint.textContent = 'Missed it — let’s try that point again.';
+                        setTimeout(() => this._beginCalibCapture(LumiGaze.calibTarget || target), 600);
+                    } else if (res.done) {
+                        // onCalibrationComplete handles the results screen.
+                    } else if (res.target) {
+                        this._beginCalibCapture(res.target);
+                    }
+                };
+                if (target.index + 1 === target.total) {
+                    // Training the model blocks the page briefly: let this text paint first.
+                    if (hint) hint.textContent = 'Computing calibration…';
+                    setTimeout(finish, 50);
+                } else {
+                    finish();
                 }
             }
         };
@@ -424,8 +442,10 @@ const EyeApp = {
         const title = document.getElementById('calibResultsTitle');
         const note  = document.getElementById('crNote');
 
+        const acceptBtn = document.getElementById('acceptCalibBtn');
         if (!report || !report.ok) {
             title.textContent = 'Calibration Incomplete';
+            if (acceptBtn) acceptBtn.textContent = 'Close (keep previous calibration)';
             document.getElementById('crRating').textContent = '—';
             document.getElementById('crConfidence').textContent = '—';
             document.getElementById('crAccuracy').textContent = '—';
@@ -436,6 +456,7 @@ const EyeApp = {
         }
 
         title.textContent = 'Calibration Complete';
+        if (acceptBtn) acceptBtn.textContent = 'Accept & Use This Calibration';
         const rate = document.getElementById('crRating');
         rate.textContent = report.rating;
         rate.className = 'cr-value ' + this._ratingClass(report.rating);
@@ -443,9 +464,9 @@ const EyeApp = {
         document.getElementById('crAccuracy').textContent = '~' + report.accuracyPx + ' px';
         document.getElementById('crSamples').textContent = report.samples;
         if (note) note.textContent = report.r2 >= 0.8
-            ? 'Tracking is ready. You can recalibrate any time from the Caregiver tab.'
+            ? 'Accept to start using this calibration. You can recalibrate any time from the Caregiver tab.'
             : 'Accuracy is modest. For better results use more points, improve lighting, and keep your head still.';
-        this._holdPill(`Calibrated ✓ ${report.rating}`, 'active', 4000);
+        this.updatePill('Review the calibration result', 'calibrating');
     },
 
     _ratingClass(rating) {

@@ -32,7 +32,9 @@ const LumiGaze = {
     FEATURE_DIM: 10,
 
     // V3 subsystems
-    calibration: null,     // GazeCalibration instance (trained model lives here)
+    calibration: null,     // GazeCalibration in use (the trained model lives here)
+    _calibRun: null,       // calibration being recorded; replaces `calibration` only once accepted
+    _pendingCalibration: null, // trained run awaiting the caregiver's Accept
     stabilizer: null,      // GazeStabilizer instance
     dwell: null,           // DwellController instance
 
@@ -430,9 +432,9 @@ const LumiGaze = {
         // ── Calibration capture mode ────────────────────
         if (this.isCalibrating) {
             if (fx.eyeMode !== 'none' && fx.features) {
-                this.calibration.addSample(fx.features);
+                this._calibRun.addSample(fx.features);
                 this.rawRatios = fx.rawRatios;
-                if (this.onCalibrationCollect) this.onCalibrationCollect(this.calibration.sampleCount());
+                if (this.onCalibrationCollect) this.onCalibrationCollect(this._calibRun.sampleCount());
             }
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, fx.eyeMode, 'calibrating', this.lastConfidence);
             return;
@@ -463,7 +465,16 @@ const LumiGaze = {
 
         this._avgConfidence = (this._avgConfidence || 1.0) * 0.9 + this.lastConfidence * 0.1;
 
-        if (this.onGazeUpdate) this.onGazeUpdate(pt.x, pt.y, fx.eyeMode, 'active', this._avgConfidence);
+        if (this.onGazeUpdate) {
+            this.onGazeUpdate(pt.x, pt.y, fx.eyeMode, this.isCalibrated ? 'active' : 'uncalibrated', this._avgConfidence);
+        }
+
+        // Before calibration the cursor comes from a rough fixed mapping; letting it
+        // click would press random targets (AUDIT M5). Gaze clicks wait for a calibration.
+        if (!this.isCalibrated) {
+            this.dwell.cancel();
+            return;
+        }
 
         let dynamicDwell = settings.dwellTimeMs;
         if (this._avgConfidence < 0.4) dynamicDwell *= 2.0;
@@ -550,12 +561,16 @@ const LumiGaze = {
     // ─────────────────────────────────────────────────────
     //  CALIBRATION (V3 — multi-point, regression-trained)
     // ─────────────────────────────────────────────────────
-    /** Begin calibration. @param {number} pointCount 5 | 9 | 16 | 25 */
+    /**
+     * Begin calibration. @param {number} pointCount 5 | 9 | 16 | 25
+     * Samples go into a separate run: the calibration in use (if any) keeps
+     * working until the new one is trained and accepted (AUDIT M6).
+     */
     startCalibration(pointCount = 9) {
-        if (!this.calibration || !this.isCalibrating) this.calibration = new GazeCalibration();
-        this.calibTarget = this.calibration.begin(pointCount);
+        this._calibRun = new GazeCalibration();
+        this._pendingCalibration = null;
+        this.calibTarget = this._calibRun.begin(pointCount);
         this.isCalibrating = true;
-        this.isCalibrated = false;
         this.updateStatus(`Calibration started — ${pointCount} points. Look at the target.`, 'info');
         return this.calibTarget;
     },
@@ -566,41 +581,61 @@ const LumiGaze = {
         // ~850ms of clean capture at 30fps is ~25 frames. Below 12 the point is
         // mostly blink or lost face, and folding it in would poison the fit —
         // the caller's retry path handles this.
-        if (this.calibration.sampleCount() < 12) {
+        if (this._calibRun.sampleCount() < 12) {
             this.updateStatus('Hold your gaze on the target a moment longer…', 'error');
-            return { error: 'insufficient', samples: this.calibration.sampleCount() };
+            return { error: 'insufficient', samples: this._calibRun.sampleCount() };
         }
-        const res = this.calibration.commitPoint();
+        const res = this._calibRun.commitPoint();
         if (!res.done) {
             this.calibTarget = res.next;
             this.updateStatus(`Point ${res.next.index} of ${res.next.total} captured.`, 'info');
             return { done: false, target: res.next, accepted: res.accepted, rejected: res.rejected };
         }
 
-        // Last point captured → train the regression model.
+        // Last point captured → train the regression model. It is not used or
+        // saved until the caregiver accepts it on the results screen.
         this.isCalibrating = false;
-        const report = this.calibration.train({ width: window.innerWidth, height: window.innerHeight });
+        const run = this._calibRun;
+        this._calibRun = null;
+        const report = run.train({ width: window.innerWidth, height: window.innerHeight });
         if (report.ok) {
-            this.isCalibrated = true;
-            LumiStore.saveCalibration(this.calibration.toJSON());
-            this.updateStatus(`Calibration complete — ${report.rating} (${report.confidence}%, ~${report.accuracyPx}px).`, 'success');
+            this._pendingCalibration = run;
+            this.updateStatus(`Calibration trained — ${report.rating}. Accept it to start using it.`, 'success');
         } else {
-            this.updateStatus('Calibration failed — not enough clean samples. Please retry.', 'error');
+            this.updateStatus('Calibration failed — not enough clean samples. The previous calibration is still in use.', 'error');
         }
         if (this.onCalibrationComplete) this.onCalibrationComplete(report);
         return { done: true, report };
     },
 
+    /** Put the reviewed calibration into use and save it. Returns false if there is none. */
+    acceptCalibration() {
+        if (!this._pendingCalibration) return false;
+        this.calibration = this._pendingCalibration;
+        this._pendingCalibration = null;
+        this.isCalibrated = true;
+        LumiStore.saveCalibration(this.calibration.toJSON());
+        this.updateStatus(`Calibration in use — ${this.calibration.report.rating}.`, 'success');
+        return true;
+    },
+
+    /** Drop a trained calibration that was not accepted; the previous one stays in use. */
+    discardCalibration() {
+        this._pendingCalibration = null;
+    },
+
     /** Discard the in-transit samples gathered during the settle phase. */
     clearCalibrationSamples() {
-        if (this.isCalibrating && this.calibration) this.calibration.discardCurrentSamples();
+        if (this.isCalibrating && this._calibRun) this._calibRun.discardCurrentSamples();
     },
 
     cancelCalibration() {
         this.isCalibrating = false;
         this.calibTarget = null;
-        if (this.calibration && !this.calibration.isReady) this.calibration = null;
-        this.updateStatus('Calibration cancelled.', 'info');
+        this._calibRun = null;
+        this.updateStatus(this.isCalibrated
+            ? 'Calibration cancelled — the previous calibration is still in use.'
+            : 'Calibration cancelled.', 'info');
     },
 
     updateStatus(msg, type) { if (this.onStatusUpdate) this.onStatusUpdate(msg, type); }

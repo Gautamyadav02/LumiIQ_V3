@@ -75,3 +75,15 @@ test('L4: an emergency message is not overwritten by the next gaze frame', () =>
   app._onGazeUpdate(100, 100, 'both', 'active', 1);
   assert.match(pill(), /EMERGENCY/);
 });
+
+// ── M6 (results screen) ─────────────────────────────────────────────
+test('M6: the results screen offers "Accept" only for a successful calibration', () => {
+  const { env, app } = setupApp();
+  for (const id of ['calibDotBox', 'calibResults', 'calibResultsTitle', 'crNote', 'crRating',
+                    'crConfidence', 'crAccuracy', 'crSamples', 'acceptCalibBtn']) env.element({ id });
+  const button = () => env.document.getElementById('acceptCalibBtn').textContent;
+  app._showCalibResults({ ok: false, samples: 3 });
+  assert.match(button(), /keep previous calibration/i);
+  app._showCalibResults({ ok: true, rating: 'Good', confidence: 85, accuracyPx: 120, samples: 200, r2: 0.85 });
+  assert.match(button(), /accept/i);
+});

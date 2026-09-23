@@ -1,10 +1,15 @@
 /**
- * LumiIQ - Data Store (API-backed with offline fallback)
+ * LumiIQ - Data Store (API-backed, keeps working while the server is down)
  *
  * Talks to the Python/SQLite backend over REST, but keeps a synchronous
  * in-memory cache so hot paths (e.g. the gaze loop calling getSettings()
- * every frame) stay fast. Every write is mirrored to localStorage, so the
- * UI keeps working even if the server is briefly unreachable.
+ * every frame) stay fast.
+ *
+ * Writes go through a queue kept in localStorage and are removed only when
+ * the server confirms them, so messages, symptoms and alerts are not lost
+ * if the server is unreachable or the page reloads (AUDIT M8). The queue is
+ * retried on start-up, when the browser comes back online, and every 30 s.
+ * Settings and calibration are also mirrored to localStorage for start-up.
  */
 
 const LumiStore = {
@@ -28,8 +33,12 @@ const LumiStore = {
 
     LS: {
         SETTINGS: 'lumiiq_settings',
-        CALIBRATION: 'lumiiq_calibration'
+        CALIBRATION: 'lumiiq_calibration',
+        PENDING: 'lumiiq_pending_writes'   // writes the server has not confirmed yet, oldest first
     },
+
+    MAX_PENDING: 500,        // bound the queue; beyond this the oldest entries are dropped
+    RETRY_MS: 30000,
 
     _cache: {
         settings: null,
@@ -40,6 +49,8 @@ const LumiStore = {
     },
     online: false,
     _settingsTimer: null,
+    _flushPromise: null,
+    _seq: 0,
 
     // ─────────────────────────────────────────────────────
     //  INIT — hydrate cache from server (fallback: localStorage)
@@ -62,6 +73,11 @@ const LumiStore = {
         // Logs
         await this.refreshLogs();
 
+        // Deliver anything queued while the server was unreachable.
+        window.addEventListener('online', () => this.flushPending());
+        setInterval(() => this.flushPending(), this.RETRY_MS);
+        this.flushPending();
+
         console.log(`LumiIQ store ready (online: ${this.online}).`);
     },
 
@@ -72,6 +88,7 @@ const LumiStore = {
             this._cache.symptom = data.symptom || [];
             this._cache.alert   = data.alert   || [];
         }
+        this._showPendingLogs();
         return this._cache;
     },
 
@@ -90,7 +107,7 @@ const LumiStore = {
         window.dispatchEvent(new Event('lumiiq-settings-changed'));
         // Debounce server writes while a slider is being dragged.
         clearTimeout(this._settingsTimer);
-        this._settingsTimer = setTimeout(() => this._put('/api/settings', s), 250);
+        this._settingsTimer = setTimeout(() => this._write('PUT', '/api/settings', { ...s }), 250);
     },
 
     // ─────────────────────────────────────────────────────
@@ -103,7 +120,7 @@ const LumiStore = {
     saveCalibration(points) {
         this._cache.calibration = points;
         this._lsSet(this.LS.CALIBRATION, points);
-        this._put('/api/calibration', points);
+        this._write('PUT', '/api/calibration', points);
     },
 
     // ─────────────────────────────────────────────────────
@@ -115,67 +132,117 @@ const LumiStore = {
 
     addTypedLog(text) {
         if (!text || text.trim() === '') return;
-        const item = { id: 'log_' + Date.now(), text: text.trim(), timestamp: new Date().toISOString() };
-        this._cache.typed.unshift(item);
-        if (this._cache.typed.length > 200) this._cache.typed.pop();
-        this._post('/api/logs/typed', { text: item.text });
+        const body = { text: text.trim(), timestamp: new Date().toISOString() };
+        const id = this._write('POST', '/api/logs/typed', body);
+        this._remember('typed', { id, ...body }, 200);
         return this._cache.typed;
     },
 
     addSymptomLog(bodyPart, symptom) {
-        const item = { id: 'sym_' + Date.now(), bodyPart, symptom, timestamp: new Date().toISOString() };
-        this._cache.symptom.unshift(item);
-        if (this._cache.symptom.length > 200) this._cache.symptom.pop();
-        this._post('/api/logs/symptom', { bodyPart, symptom });
+        const body = { bodyPart, symptom, timestamp: new Date().toISOString() };
+        const id = this._write('POST', '/api/logs/symptom', body);
+        this._remember('symptom', { id, ...body }, 200);
         return this._cache.symptom;
     },
 
     addAlertLog(type, details) {
-        const item = { id: 'alert_' + Date.now(), type, details, timestamp: new Date().toISOString() };
-        this._cache.alert.unshift(item);
-        if (this._cache.alert.length > 100) this._cache.alert.pop();
-        this._post('/api/logs/alert', { type, details });
+        const body = { type, details, timestamp: new Date().toISOString() };
+        const id = this._write('POST', '/api/logs/alert', body);
+        this._remember('alert', { id, ...body }, 100);
         return this._cache.alert;
     },
 
     async clearAllLogs() {
         this._cache.typed = []; this._cache.symptom = []; this._cache.alert = [];
-        await this._del('/api/logs');
+        try { await fetch('/api/logs', { method: 'DELETE' }); }
+        catch (err) { console.warn('Could not clear logs on the server:', err); }
+    },
+
+    _remember(kind, item, limit) {
+        this._cache[kind].unshift(item);
+        if (this._cache[kind].length > limit) this._cache[kind].pop();
+    },
+
+    /** Put queued (not yet delivered) log entries into the cache so the caregiver still sees them. */
+    _showPendingLogs() {
+        const kinds = { '/api/logs/typed': 'typed', '/api/logs/symptom': 'symptom', '/api/logs/alert': 'alert' };
+        for (const entry of this._pending()) {
+            const kind = kinds[entry.url];
+            if (!kind || this._cache[kind].some((item) => item.id === entry.id)) continue;
+            this._cache[kind].unshift({ id: entry.id, ...entry.body });
+        }
     },
 
     // ─────────────────────────────────────────────────────
-    //  HTTP helpers (never throw — always degrade gracefully)
+    //  WRITE QUEUE — nothing is dropped because the server is down
+    // ─────────────────────────────────────────────────────
+    /** Queue a write, then try to deliver the queue. Returns the entry id. */
+    _write(method, url, body) {
+        const entry = { id: `pending_${Date.now()}_${this._seq++}`, method, url, body };
+        let queue = this._pending();
+        // A newer settings/calibration write supersedes an older queued one.
+        if (method === 'PUT') queue = queue.filter((e) => !(e.method === 'PUT' && e.url === url));
+        queue.push(entry);
+        if (queue.length > this.MAX_PENDING) queue = queue.slice(queue.length - this.MAX_PENDING);
+        this._lsSet(this.LS.PENDING, queue);
+        this.flushPending();
+        return entry.id;
+    },
+
+    _pending() { return this._lsGet(this.LS.PENDING, []); },
+
+    /** Deliver queued writes in order; stop at the first failure and retry later. */
+    flushPending() {
+        if (!this._flushPromise) {
+            this._flushPromise = this._deliverQueue().finally(() => { this._flushPromise = null; });
+        }
+        return this._flushPromise;
+    },
+
+    async _deliverQueue() {
+        for (let entry = this._pending()[0]; entry; entry = this._pending()[0]) {
+            let status;
+            try {
+                const r = await fetch(entry.url, {
+                    method: entry.method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(entry.body)
+                });
+                status = r.status;
+            } catch (err) {
+                this.online = false;          // unreachable: keep everything for the next attempt
+                return;
+            }
+            if (status >= 500) { this.online = false; return; }   // server trouble: retry later
+            if (status >= 400) {
+                // The server will never accept this entry: drop it rather than block the queue.
+                console.warn(`Server rejected ${entry.method} ${entry.url} (HTTP ${status}); dropping it.`);
+            }
+            this.online = true;
+            this._lsSet(this.LS.PENDING, this._pending().filter((e) => e.id !== entry.id));
+        }
+    },
+
+    // ─────────────────────────────────────────────────────
+    //  HTTP / localStorage helpers
     // ─────────────────────────────────────────────────────
     async _get(url) {
         try {
             const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
             if (!r.ok) return null;
             return await r.json();
-        } catch (_) { return null; }
-    },
-    _put(url, body) {
-        fetch(url, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).catch(() => {});
-    },
-    _post(url, body) {
-        fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).catch(() => {});
-    },
-    async _del(url) {
-        try { await fetch(url, { method: 'DELETE' }); } catch (_) {}
+        } catch (err) {
+            console.warn(`GET ${url} failed (server unreachable?):`, err.message || err);
+            return null;
+        }
     },
 
     _lsGet(key, fallback) {
         try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
-        catch (_) { return fallback; }
+        catch (err) { console.warn(`localStorage read of ${key} failed:`, err); return fallback; }
     },
     _lsSet(key, val) {
-        try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) {}
+        try { localStorage.setItem(key, JSON.stringify(val)); }
+        catch (err) { console.warn(`localStorage write of ${key} failed:`, err); }
     }
 };

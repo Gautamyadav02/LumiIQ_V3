@@ -7,17 +7,21 @@
 const LumiBodyMap = {
     selectedPart: null,
 
+    // Front view (SVG units, viewBox 400×450). Zones must not overlap: where two
+    // shapes overlap, the one drawn later wins the hit-test — that used to make the
+    // centres of Chest and Stomach select "Back" (AUDIT H5). The back cannot be
+    // shown on a front view, so "Back" is a separate button (no cx/cy).
     PARTS: [
-        { id: 'head',       label: 'Head',        hindi: 'सिर',      cx: 200, cy: 50,  rx: 50, ry: 45  },
-        { id: 'eyes',       label: 'Eyes',         hindi: 'आँखें',    cx: 200, cy: 42,  rx: 28, ry: 14  },
-        { id: 'throat',     label: 'Throat',       hindi: 'गला',      cx: 200, cy: 100, rx: 25, ry: 18  },
-        { id: 'chest',      label: 'Chest',        hindi: 'छाती',     cx: 200, cy: 155, rx: 65, ry: 42  },
-        { id: 'stomach',    label: 'Stomach',      hindi: 'पेट',      cx: 200, cy: 220, rx: 55, ry: 38  },
-        { id: 'left_arm',   label: 'Left Arm',     hindi: 'बायाँ हाथ', cx: 120, cy: 185, rx: 28, ry: 75  },
-        { id: 'right_arm',  label: 'Right Arm',    hindi: 'दायाँ हाथ',cx: 280, cy: 185, rx: 28, ry: 75  },
-        { id: 'left_leg',   label: 'Left Leg',     hindi: 'बायाँ पैर', cx: 162, cy: 340, rx: 32, ry: 90  },
-        { id: 'right_leg',  label: 'Right Leg',    hindi: 'दायाँ पैर', cx: 238, cy: 340, rx: 32, ry: 90  },
-        { id: 'back',       label: 'Back',         hindi: 'पीठ',      cx: 200, cy: 200, rx: 30, ry: 70  }
+        { id: 'head',       label: 'Head',        hindi: 'सिर',      cx: 200, cy: 24,  rx: 42, ry: 17 },
+        { id: 'eyes',       label: 'Eyes',        hindi: 'आँखें',    cx: 200, cy: 55,  rx: 42, ry: 12 },
+        { id: 'throat',     label: 'Throat',      hindi: 'गला',      cx: 200, cy: 96,  rx: 24, ry: 18 },
+        { id: 'chest',      label: 'Chest',       hindi: 'छाती',     cx: 200, cy: 158, rx: 58, ry: 38 },
+        { id: 'stomach',    label: 'Stomach',     hindi: 'पेट',      cx: 200, cy: 238, rx: 54, ry: 36 },
+        { id: 'left_arm',   label: 'Left Arm',    hindi: 'बायाँ हाथ', cx: 114, cy: 182, rx: 24, ry: 70 },
+        { id: 'right_arm',  label: 'Right Arm',   hindi: 'दायाँ हाथ',cx: 286, cy: 182, rx: 24, ry: 70 },
+        { id: 'left_leg',   label: 'Left Leg',    hindi: 'बायाँ पैर', cx: 164, cy: 360, rx: 30, ry: 78 },
+        { id: 'right_leg',  label: 'Right Leg',   hindi: 'दायाँ पैर', cx: 236, cy: 360, rx: 30, ry: 78 },
+        { id: 'back',       label: 'Back',        hindi: 'पीठ' }
     ],
 
     SYMPTOMS: [
@@ -45,6 +49,8 @@ const LumiBodyMap = {
     render(containerId) {
         const el = document.getElementById(containerId);
         if (!el) return;
+        const zones = this.PARTS.filter(p => p.cx !== undefined);
+        const dwellSecs = ((LumiStore.getSettings().dwellTimeMs || 1200) / 1000).toFixed(1);
         el.innerHTML = `
         <div class="bodymap-layout">
 
@@ -61,8 +67,8 @@ const LumiBodyMap = {
                         <rect    x="130" y="270"  width="68"  height="170" rx="18" fill="#1e2130" stroke="none"/>
                         <rect    x="202" y="270"  width="68"  height="170" rx="18" fill="#1e2130" stroke="none"/>
 
-                        <!-- Clickable zones (ellipses) -->
-                        ${this.PARTS.map(p => `
+                        <!-- Gaze zones (ellipses, non-overlapping); labels sit inside each zone -->
+                        ${zones.map(p => `
                         <g class="body-zone-group">
                             <ellipse
                                 cx="${p.cx}" cy="${p.cy}" rx="${p.rx}" ry="${p.ry}"
@@ -70,15 +76,19 @@ const LumiBodyMap = {
                                 data-part="${p.id}"
                                 id="zone_${p.id}"
                             />
-                            <text x="${p.cx}" y="${p.cy + p.ry + 14}"
-                                class="zone-label" text-anchor="middle"
-                                font-size="11" fill="rgba(255,179,0,0.7)"
+                            <text x="${p.cx}" y="${p.cy}"
+                                class="zone-label" text-anchor="middle" dominant-baseline="middle"
+                                font-size="11" fill="rgba(255,179,0,0.85)"
                                 pointer-events="none">${p.label}</text>
                         </g>
                         `).join('')}
                     </svg>
                 </div>
-                <p class="hint-text">👁 Gaze at a body part for 1.2 seconds to select it</p>
+                <button class="body-zone-btn gazeable" data-part="back" id="zone_back">
+                    Back — पीठ
+                    <span class="dwell-progress-ring"></span>
+                </button>
+                <p class="hint-text">👁 Look at a body part for ${dwellSecs} seconds to select it</p>
             </div>
 
             <!-- RIGHT: Symptom panel -->
@@ -115,6 +125,8 @@ const LumiBodyMap = {
         document.querySelectorAll('.body-zone').forEach(z => {
             z.addEventListener('click', e => this.selectPart(e.currentTarget.dataset.part));
         });
+        const back = document.getElementById('zone_back');
+        if (back) back.addEventListener('click', () => this.selectPart('back'));
         document.querySelectorAll('.symptom-card').forEach(b => {
             b.addEventListener('click', e => this.reportSymptom(e.currentTarget.dataset.symptom));
         });
@@ -129,6 +141,7 @@ const LumiBodyMap = {
 
         // Highlight selected zone
         document.querySelectorAll('.body-zone').forEach(z => z.classList.remove('zone-active'));
+        document.getElementById('zone_back')?.classList.remove('zone-active');
         const zone = document.getElementById(`zone_${partId}`);
         if (zone) zone.classList.add('zone-active');
 
@@ -163,6 +176,7 @@ const LumiBodyMap = {
     _resetPanel() {
         this.selectedPart = null;
         document.querySelectorAll('.body-zone').forEach(z => z.classList.remove('zone-active'));
+        document.getElementById('zone_back')?.classList.remove('zone-active');
         const idle   = document.getElementById('symptomIdle');
         const active = document.getElementById('symptomActive');
         if (idle)   idle.classList.remove('hidden');

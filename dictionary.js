@@ -22,7 +22,9 @@ const LumiDictionary = {
         "have", "has", "had", "will", "would", "can", "could", "should", "please", "thank", "thanks", "hello", "goodbye",
         "yes", "no", "not", "but", "and", "or", "some", "more", "now", "later", "today", "tonight", "morning", "night",
         // Family
-        "son", "daughter", "wife", "husband", "brother", "sister", "friend", "family", "mom", "dad"
+        "son", "daughter", "wife", "husband", "brother", "sister", "friend", "family", "mom", "dad",
+        // Contractions as typed on this keyboard, which has no apostrophe key
+        "cant", "dont", "wont", "im", "isnt", "didnt", "doesnt", "ok"
     ],
 
     // Contextual predictive transitions (Bigrams) to predict the NEXT word
@@ -81,6 +83,12 @@ const LumiDictionary = {
 
         // If we have prefix matches, take them. Fill up the rest with general words.
         let results = [...new Set(prefixMatches)];
+        // A word that matches nothing may be misspelled: offer the likely
+        // correction first. It is only a suggestion — never applied for the user.
+        if (results.length === 0) {
+            const fix = this.getCorrection(lastWord);
+            if (fix) results.push(fix.toLowerCase());
+        }
         if (results.length < 4) {
             // If prefix match is a known contextual parent, add its predictions
             const possibleContext = this.getContextSuggestions(lastWord);
@@ -143,35 +151,23 @@ const LumiDictionary = {
     },
 
     /**
-     * Auto-corrects a typed word if misspelled, returning the best match from vocabulary.
-     * @param {string} word - The word to autocorrect
-     * @returns {string} - The corrected word, or the original if no close match is found
+     * A likely intended vocabulary word for a misspelled word (edit distance at
+     * most 2), or null when the word is known, too short to judge, or nothing
+     * is close. Only ever offered as a suggestion — never applied automatically,
+     * because replacing a word can change its meaning ("cant" is 1 edit from "want").
+     * @param {string} word
+     * @returns {string|null}
      */
-    autocorrect(word) {
-        if (!word || word.trim() === "") return "";
-        const cleanWord = word.trim().toLowerCase();
-
-        // If it's already in the vocabulary, keep it
-        if (this.VOCABULARY.includes(cleanWord)) {
-            return word;
-        }
-
-        let bestMatch = word;
-        let minDistance = 3; // Allow maximum edit distance of 2
-
+    getCorrection(word) {
+        const clean = (word || '').trim().toLowerCase();
+        if (clean.length < 3 || this.VOCABULARY.includes(clean)) return null;
+        let best = null;
+        let bestDistance = 3; // accept an edit distance of at most 2
         for (const vocab of this.VOCABULARY) {
-            // Skip short words or highly disparate lengths
-            if (Math.abs(vocab.length - cleanWord.length) > 2) continue;
-
-            const dist = this.levenshteinDistance(cleanWord, vocab);
-            if (dist < minDistance) {
-                minDistance = dist;
-                bestMatch = vocab;
-            }
+            if (Math.abs(vocab.length - clean.length) > 2) continue;
+            const d = this.levenshteinDistance(clean, vocab.toLowerCase());
+            if (d < bestDistance) { bestDistance = d; best = vocab; }
         }
-
-        // Return capitalized match if original was capitalized
-        const isCapitalized = word.charAt(0) === word.charAt(0).toUpperCase();
-        return isCapitalized ? this.capitalize(bestMatch) : bestMatch;
+        return best ? this.capitalize(best) : null;
     }
 };

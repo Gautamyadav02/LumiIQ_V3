@@ -80,16 +80,9 @@ const LumiKeyboard = {
         if (k === '⌫') {
             this.currentText = this.currentText.slice(0, -1);
         } else if (k === 'SPACE') {
-            // Autocorrect last word on space
-            const words = this.currentText.trimEnd().split(/\s+/);
-            const last  = words[words.length - 1] || '';
-            if (last.length > 1) {
-                const fixed = LumiDictionary.autocorrect(last);
-                if (fixed !== last) {
-                    const idx = this.currentText.lastIndexOf(last);
-                    this.currentText = this.currentText.slice(0, idx) + fixed;
-                }
-            }
+            // No autocorrect: silently replacing a word can change its meaning
+            // ("CANT" became "Want"). A likely correction is offered in the
+            // suggestion bar instead, and the user decides.
             this.currentText += ' ';
         } else if (k === 'CLEAR') {
             this.currentText = '';

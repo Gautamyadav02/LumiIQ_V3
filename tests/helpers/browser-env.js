@@ -8,9 +8,10 @@
  * It is deliberately not a DOM implementation — each test builds the few
  * elements it needs with `env.element(...)`.
  *
- * Note: objects created inside the context (arrays, plain objects) come from
- * a different JavaScript realm, so compare them with assert.deepEqual (loose)
- * or JSON, not assert.deepStrictEqual.
+ * Note: arrays and objects created inside the context come from a different
+ * JavaScript realm (different Array.prototype), so strict deep-equality fails
+ * on them. Copy them out first ([...arr], JSON) before assert.deepEqual from
+ * node:assert/strict.
  */
 const fs = require('fs');
 const path = require('path');

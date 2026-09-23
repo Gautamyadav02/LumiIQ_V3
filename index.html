@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LumiIQ — Eye-Gaze Communication & Safety System</title>
+    <meta name="description" content="LumiIQ: Eye-gaze assistive communication system for paralyzed and locked-in patients. Runs entirely in browser with standard webcam.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <meta name="theme-color" content="#FFB300">
+</head>
+<body>
+
+<div class="eye-app">
+
+    <!-- ── HEADER ──────────────────────────────────────── -->
+    <header class="eye-header">
+        <div class="brand">
+            <div class="brand-icon">👁</div>
+            <h1 class="brand-name">Eye<span>Care</span></h1>
+        </div>
+
+        <!-- Three tabs -->
+        <nav class="nav-tabs">
+            <button class="nav-tab-btn gazeable active" data-tab="keyboard" id="tabKeyboard">
+                ⌨ Keyboard
+                <span class="dwell-progress-ring"></span>
+            </button>
+            <button class="nav-tab-btn gazeable" data-tab="phrases" id="tabPhrases">💬 Phrases<span class="dwell-progress-ring"></span></button>
+            <button class="nav-tab-btn gazeable" data-tab="bodymap" id="tabBodymap">
+                🧍 Body Map
+                <span class="dwell-progress-ring"></span>
+            </button>
+            <button class="nav-tab-btn gazeable" data-tab="dashboard" id="tabDashboard">
+                ⚙ Caregiver
+                <span class="dwell-progress-ring"></span>
+            </button>
+        </nav>
+
+        <div class="status-pill" id="statusPill">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </header>
+
+    <!-- ── SCREENS ─────────────────────────────────────── -->
+    <main class="eye-main">
+
+        <!-- Keyboard screen -->
+        <div class="eye-screen active" id="keyboardScreen"></div>
+
+        <!-- Phrases screen -->
+        <div class="eye-screen" id="phrasesScreen"></div>
+
+        <!-- Body Map screen -->
+        <div class="eye-screen" id="bodymapScreen"></div>
+
+        <!-- Caregiver Dashboard -->
+        <div class="eye-screen" id="dashboardScreen">
+            <div class="dashboard-layout">
+
+                <!-- LEFT column: camera + calibration -->
+                <div class="dash-left">
+                    <div class="dash-card">
+                        <h3>Live Tracking Feed</h3>
+                        <div class="video-box">
+                            <video id="caregiverVideo" class="feed-video" autoplay playsinline muted></video>
+                            <canvas id="caregiverCanvas" class="feed-canvas" width="640" height="480"></canvas>
+                        </div>
+                        <button class="dash-btn" id="startCameraBtn">Start Gaze Camera</button>
+                    </div>
+                    <div class="dash-card">
+                        <h3>Gaze Calibration</h3>
+                        <p class="muted-text">Run 5-point calibration to map your eye movements to the screen with precision.</p>
+                        <button class="dash-btn" id="startCalibrationBtn">Calibrate Gaze Engine</button>
+                        <div class="calib-status" id="calibStatusText">Status: Standby</div>
+                    </div>
+                </div>
+
+                <!-- RIGHT column: logs + settings -->
+                <div class="dash-right">
+                    <div class="logs-row">
+                        <div class="dash-card">
+                            <h3>Patient Timeline</h3>
+                            <div class="logs-list" id="dashCommLogs">
+                                <div class="log-empty">No records yet.</div>
+                            </div>
+                        </div>
+                        <div class="dash-card">
+                            <h3>Safety Alerts</h3>
+                            <div class="logs-list" id="dashAlertLogs">
+                                <div class="log-empty">No alerts recorded.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dash-card settings-card">
+                        <h3>Platform Settings</h3>
+                        <div class="settings-grid">
+                            <div class="settings-field">
+                                <label for="set_dwellTimeMs">Dwell Time (ms)</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_dwellTimeMs" min="600" max="2500" step="100">
+                                    <span class="slider-val" id="set_dwellTimeMs_val">1200</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_smoothingFactor">Smoothing / Speed</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_smoothingFactor" min="0.05" max="0.45" step="0.01">
+                                    <span class="slider-val" id="set_smoothingFactor_val">0.35</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_activeEye">Active Eye</label>
+                                <select id="set_activeEye">
+                                    <option value="both">Both Eyes</option>
+                                    <option value="left">Left Eye Only</option>
+                                    <option value="right">Right Eye Only</option>
+                                </select>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_swapEyes">Mirror / Swap Eyes</label>
+                                <select id="set_swapEyes">
+                                    <option value="false">Standard (Normal)</option>
+                                    <option value="true">Swap Left & Right</option>
+                                </select>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_earThreshold">Blink Threshold (EAR)</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_earThreshold" min="0.10" max="0.30" step="0.01">
+                                    <span class="slider-val" id="set_earThreshold_val">0.18</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_gazeSensitivityX">Sensitivity X</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_gazeSensitivityX" min="0.5" max="2.5" step="0.1">
+                                    <span class="slider-val" id="set_gazeSensitivityX_val">1.2</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_gazeSensitivityY">Sensitivity Y</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_gazeSensitivityY" min="0.5" max="2.5" step="0.1">
+                                    <span class="slider-val" id="set_gazeSensitivityY_val">1.2</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_alarmVolume">Alarm Volume</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_alarmVolume" min="0.0" max="1.0" step="0.05">
+                                    <span class="slider-val" id="set_alarmVolume_val">0.5</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_voiceRate">Voice Speed</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_voiceRate" min="0.5" max="2.0" step="0.1">
+                                    <span class="slider-val" id="set_voiceRate_val">0.9</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_voicePitch">Voice Pitch</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_voicePitch" min="0.5" max="2.0" step="0.1">
+                                    <span class="slider-val" id="set_voicePitch_val">1.0</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_voiceVolume">Voice Volume (loudness)</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_voiceVolume" min="0.0" max="1.0" step="0.05">
+                                    <span class="slider-val" id="set_voiceVolume_val">1.0</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_voiceLanguage">Voice Language</label>
+                                <select id="set_voiceLanguage">
+                                    <option value="en-US">English (US)</option>
+                                    <option value="en-GB">English (UK)</option>
+                                    <option value="hi-IN">Hindi (India)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<!-- ── CALIBRATION OVERLAY (V3) ──────────────────────────── -->
+<div class="cal-overlay hidden" id="calibOverlay">
+
+    <!-- Step 1: intro + point-count selection -->
+    <div class="cal-intro" id="calibIntro">
+        <h2>Eye Gaze Calibration</h2>
+        <p>Keep your head still and follow the orange target with your eyes only. Each target captures automatically — just keep looking at it until it fills.</p>
+        <div class="cal-pointsel" id="calibPointSel">
+            <span class="cal-pointsel-label">Points</span>
+            <button class="cal-pt-btn" data-points="5">5</button>
+            <button class="cal-pt-btn active" data-points="9">9</button>
+            <button class="cal-pt-btn" data-points="16">16</button>
+            <button class="cal-pt-btn" data-points="25">25</button>
+        </div>
+        <p class="cal-pointsel-hint" id="calibPointHint">9 points · ~25s · recommended</p>
+        <button class="dash-btn" id="startCalibProgressBtn">Begin Calibration →</button>
+    </div>
+
+    <!-- Step 2: animated capture -->
+    <div class="cal-dotbox hidden" id="calibDotBox">
+        <div class="cal-dot" id="calibDot">
+            <div class="dot-fill" id="calibDotFill"></div>
+            <div class="dot-ring"></div>
+            <div class="dot-core"></div>
+        </div>
+        <div class="cal-progress-pill" id="calibProgressPill">Point 1 / 9</div>
+        <div class="cal-label-box">
+            <p class="cal-label" id="calibLabel">Look at the target</p>
+            <p class="cal-hint" id="calibSampleHint">Hold your gaze…</p>
+            <button class="dash-btn ghost" id="exitCalibBtn">Exit Calibration</button>
+        </div>
+    </div>
+
+    <!-- Step 3: quality report -->
+    <div class="cal-results hidden" id="calibResults">
+        <h2 id="calibResultsTitle">Calibration Complete</h2>
+        <div class="cal-result-grid">
+            <div class="cal-result"><span class="cr-label">Quality</span><span class="cr-value" id="crRating">—</span></div>
+            <div class="cal-result"><span class="cr-label">Confidence</span><span class="cr-value" id="crConfidence">—</span></div>
+            <div class="cal-result"><span class="cr-label">Est. Accuracy</span><span class="cr-value" id="crAccuracy">—</span></div>
+            <div class="cal-result"><span class="cr-label">Clean Samples</span><span class="cr-value" id="crSamples">—</span></div>
+        </div>
+        <p class="cal-result-note" id="crNote"></p>
+        <div class="cal-result-actions">
+            <button class="dash-btn" id="acceptCalibBtn">Accept &amp; Start Tracking</button>
+            <button class="dash-btn ghost" id="recalibBtn">Recalibrate</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── EMERGENCY OVERLAY ────────────────────────────────── -->
+<div class="alarm-overlay hidden" id="emergencyOverlay">
+    <div class="alarm-card">
+        <div class="alarm-icon">🚨</div>
+        <h2>EMERGENCY DISTRESS</h2>
+        <p id="emergencyDesc">Alert triggered.</p>
+        <p class="alarm-sub">Caregiver alarm is sounding. API webhook sent.</p>
+        <button class="alarm-dismiss-btn" id="alarmDismissBtn">CAREGIVER CONFIRMED — Dismiss</button>
+    </div>
+</div>
+
+<!-- ── SCRIPTS ───────────────────────────────────────────── -->
+<script src="database.js"></script>
+<script src="dictionary.js"></script>
+<script src="voice.js"></script>
+<!-- Gaze Engine V3 modules (load before gaze-engine.js) -->
+<script src="gaze/one-euro-filter.js"></script>
+<script src="gaze/ridge-regression.js"></script>
+<script src="gaze/gaze-stabilizer.js"></script>
+<script src="gaze/dwell-controller.js"></script>
+<script src="gaze/gaze-calibration.js"></script>
+<script src="gaze/drift-detector.js"></script>
+<script src="gaze-engine.js"></script>
+<script src="keyboard.js"></script>
+<script src="body-map.js"></script>
+<script src="phrases.js"></script>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
+}
+</script>
+
+</body>
+</html>

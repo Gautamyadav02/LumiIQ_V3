@@ -1,0 +1,27 @@
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+sqlalchemy==2.0.36
+pydantic==2.10.2
+pydantic-settings==2.4.0
+python-multipart==0.0.7
+python-dotenv==1.0.1
+
+# Computer Vision & ML
+opencv-python==4.13.0.92
+mediapipe==0.10.35
+numpy>=1.24.0
+scipy>=1.13.0
+scikit-learn>=1.5.0
+
+# Optional CV models (for future enhancement)
+# onnx==1.15.0
+# onnxruntime==1.17.1
+
+# Development & Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1
+
+# Logging & Monitoring
+python-json-logger>=3.2.0
+structlog>=24.1.0

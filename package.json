@@ -1,0 +1,17 @@
+{
+  "name": "lumiiq",
+  "version": "1.0.0",
+  "description": "LumiIQ is a web-based, state-of-the-art eye-gaze assistive technology for paralyzed, bed-ridden, or locked-in patients. It runs in any modern browser using a standard webcam — no special hardware — and is now backed by a **proper Python server with a real SQLite database and a JSON REST API**.",
+  "main": "app.js",
+  "directories": {
+    "doc": "docs",
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

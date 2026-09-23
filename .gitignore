@@ -1,0 +1,33 @@
+# ── Personal / health data: never commit ─────────────────────────────
+# SQLite databases hold typed messages, symptom reports, alerts and a
+# face-derived calibration. Use a synthetic sample database instead.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+# Evaluation recordings (facial-landmark time series) — Phase 1
+recordings/
+
+# ── Secrets and machine-local tool settings ──────────────────────────
+.env
+.env.*
+.claude/settings.local.json
+
+# ── Out-of-scope codebases kept locally ──────────────────────────────
+# archive/ holds the old platform/ rewrite (its own nested git repo,
+# node_modules and a .env) and the v3 frontend.
+archive/
+
+# ── Large third-party model not used by the app ──────────────────────
+# dlib 68-point model: 99.7 MB (GitHub limit is 100 MB) and trained on
+# iBUG 300-W, whose licence excludes commercial use. dlib_tracker.py
+# downloads it on demand.
+shape_predictor_68_face_landmarks.dat
+
+# ── Build and OS artefacts ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.DS_Store
+node_modules/

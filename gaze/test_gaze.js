@@ -178,10 +178,11 @@ print('\n=== GazeCalibration layouts ===');
 
 print('\n=== GazeCalibration end-to-end (synthetic eye) ===');
 (function () {
-  // A synthetic "true" gaze model: 8 features -> normalized screen (x,y).
-  // Features: [lx, ly, rx, ry, yaw, pitch, roll, ear]. We make screen mostly a
-  // function of horizontal iris ratios (x) and vertical iris ratios (y), with a
-  // small head-pose influence and mild non-linearity — like a real eye.
+  // A synthetic "true" gaze model: 10 features -> normalized screen (x,y).
+  // Features, as built by gaze-engine.js: [lx, ly, rx, ry, yaw, pitch, roll,
+  // ear, faceScale, ipd]. Screen position is mostly a function of the iris
+  // ratios, with a small head-pose influence. This is a sanity check of the
+  // training code, NOT an accuracy evaluation (see AUDIT M1/M2).
   function eyeFeatures(sx, sy) {
     // Invert a plausible forward model to synthesize iris features for a target.
     var lx = 0.5 + (sx - 0.5) * 0.7 + noise(0.01);
@@ -192,7 +193,9 @@ print('\n=== GazeCalibration end-to-end (synthetic eye) ===');
     var pitch = (sy - 0.5) * 5 + noise(0.3);
     var roll = noise(0.5);
     var ear = 0.32 + noise(0.01);
-    return [lx, ly, rx, ry, yaw, pitch, roll, ear];
+    var faceScale = 0.12 + noise(0.0005);
+    var ipd = 0.10 + noise(0.0005);
+    return [lx, ly, rx, ry, yaw, pitch, roll, ear, faceScale, ipd];
   }
 
   var cal = new GazeCalibration({ maxSamplesPerPoint: 24 });
@@ -202,7 +205,7 @@ print('\n=== GazeCalibration end-to-end (synthetic eye) ===');
     // Collect ~35 frames per target, with occasional blink/garbage outliers.
     for (var i = 0; i < 35; i++) {
       if (i === 10 || i === 22) {
-        cal.addSample([rnd(), rnd(), rnd(), rnd(), 40, 40, 40, 0.05]); // blink/garbage
+        cal.addSample([rnd(), rnd(), rnd(), rnd(), 40, 40, 40, 0.05, rnd(), rnd()]); // blink/garbage
       } else {
         cal.addSample(eyeFeatures(target.x, target.y));
       }

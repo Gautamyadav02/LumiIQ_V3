@@ -6,7 +6,11 @@ dwell-to-click UI (predictive keyboard, anatomical body map for symptom reportin
 loud bilingual text-to-speech, and automatic safety alarms for prolonged eye closure
 or rapid blinking).
 
-This repo (`/Users/axel/LumiIQ`, not under git at the root) actually contains
+> Partly out of date (written before 2026-09-23): `platform/` and `frontend/` now live in
+> `archive/`, the folder is `/Users/axel/EyeCare` and is a git repository, and the v1 test
+> suite is `npm test`. See [AUDIT.md](AUDIT.md) and [CHANGELOG.md](CHANGELOG.md).
+
+This folder actually contains
 **three separate codebases** at different stages of maturity. They share ideas and
 some file names but are not layered on top of each other — pick the right one before
 making changes.

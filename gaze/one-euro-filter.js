@@ -1,7 +1,7 @@
 /**
  * LumiIQ Gaze Engine V3 — One Euro Filter
  *
- * The One Euro Filter (Casiez, Roussel & Vogel, CHI 2012) is the gold-standard
+ * The One Euro Filter (Casiez, Roussel & Vogel, CHI 2012) is a widely used
  * low-latency smoothing filter for noisy interactive signals. Unlike a fixed
  * exponential moving average, it adapts its cutoff frequency to the signal's
  * speed: slow movements (a fixation) are smoothed hard to kill jitter, while

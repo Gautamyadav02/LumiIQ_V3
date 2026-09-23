@@ -16,7 +16,7 @@ const LumiStore = {
     // Default settings configuration (mirrors server defaults)
     DEFAULT_SETTINGS: {
         dwellTimeMs: 1200,      // Time (in ms) to dwell on an element to trigger click
-        smoothingFactor: 0.35,  // Exponential moving average — higher = faster cursor tracking
+        smoothingFactor: 0.35,  // 0.05 (least smoothing, fastest) … 0.45 (most smoothing); mapped to One-Euro parameters in gaze-engine.js
         activeEye: 'both',      // 'both', 'left', 'right' (single-eye fallback)
         earThreshold: 0.18,     // Eye Aspect Ratio threshold below which eye is considered closed
         voiceRate: 0.95,        // Speech rate (0.5 to 2)

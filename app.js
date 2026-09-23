@@ -1,6 +1,6 @@
 /**
  * LumiIQ - Application Controller
- * - Tabs are .gazeable so dwell-click works on them
+ * - Patient tabs are .gazeable so dwell-click works on them (the Caregiver tab is not)
  * - Dwell progress draws a border sweep on any hovered element
  * - Emergency alarm uses Web Audio synthesis
  */

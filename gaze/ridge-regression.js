@@ -12,7 +12,8 @@
  * webcam eye-trackers such as WebGazer.
  *
  * Pipeline:  raw features → polynomial expansion → z-score standardization →
- *            ridge least-squares (solved via the normal equations).
+ *            ridge least-squares (solved by Householder QR on an augmented
+ *            system, which is numerically safer than the normal equations).
  */
 (function (root) {
   'use strict';
@@ -209,10 +210,10 @@
 
   /**
    * Ridge regression with polynomial features and z-score standardization.
-   * Solves the regularized normal equations:  (ZᵀZ + λR) w = Zᵀy
-   * where Z is the standardized design matrix with a leading bias column and R
-   * is the identity with a 0 in the bias position (the intercept is not
-   * penalized).
+   * Minimises  ‖y − Zw‖² + λ·n·‖w‖²  (n = number of samples; the intercept is
+   * not penalised), i.e. the solution of (ZᵀZ + λ·n·R) w = Zᵀy with R the
+   * identity except 0 at the bias. It is computed as ordinary least squares on
+   * the stacked system [Z; √(λn)·R] via Householder QR, never forming ZᵀZ.
    */
   class RidgeRegressor {
     constructor(opts = {}) {
@@ -298,8 +299,10 @@
 
   /**
    * k-fold cross-validated R² for a given degree/lambda. Used to (a) auto-select
-   * regularization strength and (b) report an honest accuracy estimate rather
-   * than the optimistic training-set fit.
+   * regularization strength and (b) estimate accuracy for the calibration report.
+   * Caveat (AUDIT M1): folds are interleaved, so frames of the same calibration
+   * target appear in both training and test folds; with such correlated frames
+   * the estimate is optimistic. To be revisited with Phase 1 measurements.
    */
   function crossValR2(X, y, opts = {}, k = 5) {
     const n = X.length;

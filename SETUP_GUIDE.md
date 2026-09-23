@@ -1,3 +1,7 @@
+> ⚠️ **Out of date.** This document describes the separate v3 prototype and contains claims
+> that were never measured. For the verified state of the working app see
+> [AUDIT.md](AUDIT.md) and [CHANGELOG.md](CHANGELOG.md).
+
 # LumiIQ v3 - Setup & Quick Start Guide
 
 ## ✅ System Ready!

@@ -200,7 +200,8 @@
       this.modelX = new Ridge({ degree: this.degree, lambda: selX.lambda }).fit(this.trainX, this.trainYx);
       this.modelY = new Ridge({ degree: this.degree, lambda: selY.lambda }).fit(this.trainX, this.trainYy);
 
-      // Cross-validated metrics = honest (non-overfit) accuracy estimate.
+      // Cross-validated metrics. Optimistic when frames of one target fall in both
+      // training and test folds (AUDIT M1) — not a measurement of real accuracy.
       const cvX = RMath.crossValR2(this.trainX, this.trainYx, { degree: this.degree, lambda: selX.lambda });
       const cvY = RMath.crossValR2(this.trainX, this.trainYy, { degree: this.degree, lambda: selY.lambda });
       const r2 = (cvX.r2 + cvY.r2) / 2;

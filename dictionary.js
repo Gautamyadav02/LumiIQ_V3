@@ -1,6 +1,6 @@
 /**
  * LumiIQ - Smart Predictive Dictionary & Autocorrect
- * Custom, lightning-fast prediction engine tailored for paralyzed and bedridden patient environments.
+ * Word prediction and spelling suggestions for a patient-oriented vocabulary.
  */
 
 const LumiDictionary = {

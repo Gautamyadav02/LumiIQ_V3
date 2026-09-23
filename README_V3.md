@@ -1,3 +1,7 @@
+> ⚠️ **Out of date.** This document describes the separate v3 prototype and contains claims
+> that were never measured. For the verified state of the working app see
+> [AUDIT.md](AUDIT.md) and [CHANGELOG.md](CHANGELOG.md).
+
 # LumiIQ v3 - Professional Medical-Grade Eye-Gaze Communication Platform
 
 A state-of-the-art, hospital-grade assistive communication system for paralyzed, bed-ridden, locked-in, and severely disabled patients using standard webcams and eye-gaze tracking technology.

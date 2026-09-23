@@ -1,3 +1,7 @@
+> ⚠️ **Historical brainstorm (June–July 2026).** Several statements about the v1 app are
+> inaccurate — e.g. Kalman/EMA stabilisation, a face-missing alarm, a Gauss–Jordan solver,
+> the body map "working". See [AUDIT.md](AUDIT.md) for the verified description.
+
 # LumiIQ — Deep Research & Brainstorm
 
 ## Executive Summary

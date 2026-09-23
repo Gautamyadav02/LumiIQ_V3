@@ -5,14 +5,18 @@
  *
  *   MediaPipe Face Landmarker (face mesh + iris + head-pose matrix)
  *        │
- *        ▼  feature vector  [lx, ly, rx, ry, yaw, pitch, roll, ear]
+ *        ▼  feature vector  [lx, ly, rx, ry, yaw, pitch, roll, ear, faceScale, ipd]
  *   GazeCalibration.predict()  ── ridge regression over polynomial features,
  *        │                         trained from a 5/9/16/25-point calibration
  *        ▼  normalized screen point (0..1)
  *   GazeStabilizer  ── One Euro filter + deadband (steady yet responsive)
  *        │
  *        ▼  pixel cursor
- *   DwellController ── focus → stability → dwell → activate
+ *   DwellController ── focus → stability → dwell → activate (only once calibrated)
+ *
+ * Safety monitoring runs alongside: prolonged eye closure, rapid blinking,
+ * no face detected, camera lost, and the page being hidden are all raised or
+ * logged. Alarms sound on this device only; nothing is sent elsewhere.
  *
  * Runs entirely client-side at camera frame-rate, so it meets the low-latency
  * target that a server round-trip cannot. Depends on the modules in /gaze:

@@ -7,11 +7,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
-        with: { node-version: 18 }
-      - name: Gaze engine unit tests
-        run: node gaze/test_gaze.js
+        with: { node-version: 22 }
       - name: Setup Python
         uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - name: Python Validation
-        run: python validate.py
+      # No dependencies to install: the tests use only Node's and Python's standard libraries.
+      # (validate.py is no longer run here: it checks the out-of-scope v3 backend and
+      # writes to the v1 database when its dependencies are installed — AUDIT M13.)
+      - name: Tests
+        run: npm test

@@ -1,18 +1,38 @@
+'use strict';
+// Unit tests for DriftDetector. (This file used to print results without
+// asserting anything, so it "passed" even when the result was wrong.)
+// Run: node --test gaze/test_drift.js
+const test = require('node:test');
+const assert = require('node:assert/strict');
 const { DriftDetector } = require('./drift-detector.js');
 
-const detector = new DriftDetector();
-let needsRecalib = false;
+const CENTRE = { x: 100, y: 100 };
+const SIZE = { width: 100, height: 100 };
+const ON_CENTRE = { x: 100, y: 100 };      // normalised error 0
+const FAR_OFF = { x: 170, y: 100 };        // 70 px off a 100 px target: normalised error 0.7
 
-// Simulate perfect clicks (error = 0)
-for (let i = 0; i < 20; i++) {
-    needsRecalib = detector.onDwellActivate({x:100, y:100}, {x:100, y:100}, {width: 100, height: 100});
+function feed(detector, point, n) {
+  let flagged = false;
+  for (let i = 0; i < n; i++) flagged = detector.onDwellActivate(point, CENTRE, SIZE);
+  return flagged;
 }
-console.log("Perfect clicks trigger recalib?", needsRecalib); // false
 
-// Simulate bad clicks (error > 0.6)
-for (let i = 0; i < 15; i++) {
-    // 70px away from center, size is 100x100 -> error ratio 0.7
-    needsRecalib = detector.onDwellActivate({x:170, y:100}, {x:100, y:100}, {width: 100, height: 100});
-}
-console.log("Bad clicks trigger recalib?", needsRecalib); // true
-console.log("PASS: Drift tests");
+test('accurate dwells never ask for recalibration', () => {
+  assert.equal(feed(new DriftDetector(), ON_CENTRE, 20), false);
+});
+
+test('does not judge before 10 dwells', () => {
+  assert.equal(feed(new DriftDetector(), FAR_OFF, 9), false);
+});
+
+test('sustained large errors from a fresh start ask for recalibration', () => {
+  assert.equal(feed(new DriftDetector(), FAR_OFF, 15), true);
+});
+
+test('drift that follows a run of accurate dwells is flagged within 10 dwells', {
+  todo: 'AUDIT M10: needs 18 consecutive misses here; threshold to be redesigned with Phase 1 data',
+}, () => {
+  const d = new DriftDetector();
+  feed(d, ON_CENTRE, 20);
+  assert.equal(feed(d, FAR_OFF, 10), true);
+});

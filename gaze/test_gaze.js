@@ -12,8 +12,10 @@
 // the same file serves local runs and CI.
 if (typeof print === 'undefined') globalThis.print = console.log;
 if (typeof load === 'undefined') {
+  // Like jsc's load(): run the file as a script in the global scope.
   const fs = require('fs');
-  globalThis.load = function (p) { (0, eval)(fs.readFileSync(p, 'utf8')); };
+  const vm = require('vm');
+  globalThis.load = function (p) { vm.runInThisContext(fs.readFileSync(p, 'utf8'), { filename: p }); };
 }
 if (typeof console === 'undefined') globalThis.console = { log: print, warn: print, error: print };
 

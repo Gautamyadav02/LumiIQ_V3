@@ -1,5 +1,14 @@
-// Stubbed-DOM smoke test: loads the real app files under jsc to verify they
-// parse, evaluate, and that the engine is correctly wired to the V3 modules.
+// Stubbed-DOM smoke test: loads the real app files to verify they parse,
+// evaluate, and that the engine is correctly wired to the V3 modules.
+// Runs under jsc (`jsc gaze/_smoke.js`) and Node (`node gaze/_smoke.js`).
+if (typeof print === 'undefined') globalThis.print = console.log;
+if (typeof load === 'undefined') {
+  // Like jsc's load(): run the file as a script in the global scope, so
+  // top-level `const` globals (LumiGaze, EyeApp) stay visible.
+  const fs = require('fs');
+  const vm = require('vm');
+  globalThis.load = function (p) { vm.runInThisContext(fs.readFileSync(p, 'utf8'), { filename: p }); };
+}
 globalThis.addEventListener = function () {};
 globalThis.window = globalThis;
 globalThis.performance = { now: function () { return 0; } };

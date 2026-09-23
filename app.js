@@ -36,6 +36,7 @@ const EyeApp = {
         this._loadSettingsValues();
         this._bindSettingsInputs();
         this._bindAlarmDismiss();
+        document.getElementById('noticeClose')?.addEventListener('click', () => this._showNotice(null));
         this._bindCameraButtons();
         this.updatePill('Disconnected', '');
 
@@ -46,6 +47,7 @@ const EyeApp = {
         LumiGaze.onBlink         = (eye)              => this._onBlink(eye);
         LumiGaze.onEmergencyAlert= (t, d)             => this._onEmergency(t, d);
         LumiGaze.onStatusUpdate  = (m, t)             => this._onStatus(m, t);
+        LumiGaze.onNotice        = (m, level)         => this._showNotice(m, level);
         LumiGaze.onCalibrationCollect  = (n)          => this._onCalibCollect(n);
         LumiGaze.onCalibrationComplete = (report)     => this._showCalibResults(report);
 
@@ -191,9 +193,19 @@ const EyeApp = {
         if (ov && desc) { desc.textContent = details; ov.classList.remove('hidden'); }
         this.updatePill('⚠ EMERGENCY ALERT', 'alert');
         this._playSiren();
-        LumiStore.addAlertLog(type, details);
+        // Already logged by LumiGaze._triggerEmergency — the single logging point.
         this._refreshLogs();
-        console.warn('[ALERT API] Would POST to caregiver webhook:', { type, details });
+    },
+
+    // Persistent caregiver notice (e.g. "monitoring is off"); null hides it.
+    _showNotice(message, level) {
+        const box = document.getElementById('noticeBanner');
+        const text = document.getElementById('noticeText');
+        if (!box || !text) return;
+        if (!message) { box.classList.add('hidden'); return; }
+        text.textContent = message;
+        box.classList.toggle('notice-error', level === 'error');
+        box.classList.remove('hidden');
     },
 
     _onStatus(msg, type) {
@@ -506,6 +518,7 @@ const EyeApp = {
         set('set_gazeSensitivityX',  s.gazeSensitivityX);
         set('set_gazeSensitivityY',  s.gazeSensitivityY);
         set('set_alarmVolume',       s.alarmVolume !== undefined ? s.alarmVolume : 0.5);
+        set('set_faceLostAlarmSec',  s.faceLostAlarmSec !== undefined ? s.faceLostAlarmSec : 10);
         set('set_voiceRate',         s.voiceRate !== undefined ? s.voiceRate : 0.95);
         set('set_voicePitch',        s.voicePitch !== undefined ? s.voicePitch : 1.0);
         set('set_voiceVolume',       s.voiceVolume !== undefined ? s.voiceVolume : 1.0);

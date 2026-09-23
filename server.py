@@ -74,6 +74,7 @@ SETTINGS_SCHEMA = {
     "voiceVolume":     ("number", (0.0, 1.0)),
     "voiceLanguage":   ("choice", {"en-US", "en-GB", "hi-IN"}),
     "alarmVolume":     ("number", (0.0, 1.0)),
+    "faceLostAlarmSec": ("number", (5, 120)),
     "swapEyes":        ("bool", None),
 }
 
@@ -87,6 +88,7 @@ DEFAULT_SETTINGS = {
     "voiceVolume": 1.0,           # loud & clear by default
     "voiceLanguage": "en-US",
     "alarmVolume": 0.7,
+    "faceLostAlarmSec": 10,
     "swapEyes": False,
 }
 

@@ -44,11 +44,12 @@ function setupEngine({ calibrated = true, settings = {} } = {}) {
   return { env, gaze, key, fired, progress, alerts, store: env.window.LumiStore };
 }
 
-/** Feed `ms` of frames (every `step` ms) with the given eye state. */
+/** Feed `ms` of camera frames with a face (every `step` ms), through the same
+ *  entry point the real frame loop uses (_onFrame). */
 function feedFrames({ env, gaze }, ms, eyes = {}, step = 33) {
   for (let elapsed = 0; elapsed < ms; elapsed += step) {
     env.clock.advance(step);
-    gaze._processLandmarks(faceLandmarks(eyes), FACING_CAMERA);
+    gaze._onFrame({ faceLandmarks: [faceLandmarks(eyes)], facialTransformationMatrixes: [FACING_CAMERA] });
   }
 }
 

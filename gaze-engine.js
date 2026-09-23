@@ -47,10 +47,16 @@ const LumiGaze = {
     _cachedSettings: null,
     _lastFrameTime: -1,     // for RAF fallback dedup
 
-    // Blink / Emergency
+    // Blink / Emergency (all times are performance.now(): a monotonic clock that
+    // system-clock changes cannot make jump)
     blinkHistory: [],
     eyesClosedSince: null,
-    emergencyAlertTriggered: false,
+    _closureAlarmed: false,       // one PROLONGED_CLOSURE alarm per closure episode
+    _rapidBlinkQuietUntil: 0,     // RAPID_BLINKS at most once per 15 s
+    _lastFaceSeen: null,          // time of the last frame with a face (while tracking)
+    _faceLostAlarmed: false,      // one FACE_NOT_DETECTED alarm per episode
+    _hiddenSince: null,           // when the page was hidden while tracking
+    _pageListenersBound: false,
 
     // Callbacks (wired by app.js)
     onGazeUpdate: null,          // (x, y, eyeMode, state)
@@ -59,6 +65,7 @@ const LumiGaze = {
     onDwellClick: null,          // (element)
     onEmergencyAlert: null,      // (type, details)
     onStatusUpdate: null,        // (message, type)
+    onNotice: null,              // (message | null, level) persistent notice for the caregiver; null clears it
     onCalibrationCollect: null,  // (sampleCount)
     onCalibrationComplete: null, // (report)
 
@@ -130,9 +137,12 @@ const LumiGaze = {
 
         // Cache settings and listen for changes
         this._cachedSettings = LumiStore.getSettings();
+        if (this._pageListenersBound) return;
+        this._pageListenersBound = true;
         window.addEventListener('lumiiq-settings-changed', () => {
             this._cachedSettings = LumiStore.getSettings();
         });
+        document.addEventListener('visibilitychange', () => this._onVisibilityChange());
     },
 
     // Map the "smoothing" setting (0.05 jittery-fast … 0.45 very-smooth) onto
@@ -170,6 +180,8 @@ const LumiGaze = {
 
             // Apply advanced constraints if supported
             const track = this.stream.getVideoTracks()[0];
+            // Fires when the camera goes away (unplugged, permission revoked) — not on stopCamera().
+            track.addEventListener('ended', () => this._onCameraLost());
             const capabilities = track.getCapabilities();
             if (capabilities.exposureMode) {
                 try {
@@ -181,7 +193,10 @@ const LumiGaze = {
                 this.videoElement.addEventListener('loadeddata', resolve, { once: true }));
             if (this.stabilizer) this.stabilizer.setBounds(window.innerWidth, window.innerHeight);
             this.isTracking = true;
+            this._lastFaceSeen = performance.now();
+            this._faceLostAlarmed = false;
             this._runLoop();
+            this._notice(null);
             this.updateStatus('Camera active. Calibrate for best accuracy.', 'success');
             return true;
         } catch (err) {
@@ -198,7 +213,37 @@ const LumiGaze = {
         if (this.stabilizer) this.stabilizer.reset();
         if (this.dwell) this.dwell.cancel();
         this.updateStatus('Tracking stopped.', 'info');
+        this._notice('Eye monitoring is OFF: the camera is stopped, so no alarms can be raised.', 'warning');
     },
+
+    /** The camera went away while tracking: stop, and alarm — monitoring is no longer possible. */
+    _onCameraLost() {
+        if (!this.isTracking) return;
+        this.isTracking = false;
+        if (this.dwell) this.dwell.cancel();
+        this.updateStatus('Camera disconnected — monitoring stopped.', 'error');
+        this._notice('Eye monitoring is OFF: the camera disconnected.', 'error');
+        this._triggerEmergency('CAMERA_LOST', 'The camera stopped (unplugged or blocked) — eye monitoring has stopped');
+    },
+
+    /** Browsers pause camera-frame callbacks for hidden pages, so monitoring pauses too: record it. */
+    _onVisibilityChange() {
+        const now = performance.now();
+        if (document.hidden) {
+            if (this.isTracking && this._hiddenSince === null) {
+                this._hiddenSince = now;
+                LumiStore.addAlertLog('MONITORING_PAUSED', 'App hidden (tab switched or window minimised) — eye monitoring paused');
+            }
+        } else if (this._hiddenSince !== null) {
+            const secs = Math.round((now - this._hiddenSince) / 1000);
+            this._hiddenSince = null;
+            this._lastFaceSeen = now;   // the hidden time is not "no face"
+            LumiStore.addAlertLog('MONITORING_RESUMED', `Eye monitoring resumed after being paused for ${secs}s`);
+            this._notice(`Eye monitoring was paused for ${secs}s while the app was hidden.`, 'warning');
+        }
+    },
+
+    _notice(message, level) { if (this.onNotice) this.onNotice(message, level); },
 
     // ─────────────────────────────────────────────────────
     //  MAIN FRAME LOOP
@@ -238,12 +283,32 @@ const LumiGaze = {
 
     /** Handle one MediaPipe result: a face → the full pipeline; no face → no gaze this frame. */
     _onFrame(result) {
+        const now = performance.now();
         const lm = result.faceLandmarks && result.faceLandmarks[0];
         const matrix = result.facialTransformationMatrixes && result.facialTransformationMatrixes[0];
-        if (lm) { this._processLandmarks(lm, matrix); return; }
+        if (lm) {
+            this._lastFaceSeen = now;
+            this._faceLostAlarmed = false;
+            this._processLandmarks(lm, matrix);
+            return;
+        }
         // Tell the dwell controller: a long enough gap cancels any dwell in progress.
-        if (this.dwell) this.dwell.noGaze(performance.now());
+        if (this.dwell) this.dwell.noGaze(now);
+        this._checkFaceLost(now);
         if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
+    },
+
+    /** One FACE_NOT_DETECTED alarm when no face has been seen for faceLostAlarmSec while tracking. */
+    _checkFaceLost(now) {
+        if (!this.isTracking || this._faceLostAlarmed || this._lastFaceSeen === null) return;
+        const settings = this._cachedSettings || LumiStore.getSettings();
+        const limitSec = settings.faceLostAlarmSec != null ? settings.faceLostAlarmSec : 10;
+        const missingSec = (now - this._lastFaceSeen) / 1000;
+        if (missingSec >= limitSec) {
+            this._faceLostAlarmed = true;
+            this._triggerEmergency('FACE_NOT_DETECTED',
+                `No face detected for ${Math.round(missingSec)}s — check the patient and the camera`);
+        }
     },
 
     // ─────────────────────────────────────────────────────
@@ -359,6 +424,9 @@ const LumiGaze = {
             this.lastConfidence = 0;
         }
 
+        // ── Blink / emergency detection (also during calibration) ──
+        this._updateBlinkState(fx, settings);
+
         // ── Calibration capture mode ────────────────────
         if (this.isCalibrating) {
             if (fx.eyeMode !== 'none' && fx.features) {
@@ -369,9 +437,6 @@ const LumiGaze = {
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, fx.eyeMode, 'calibrating', this.lastConfidence);
             return;
         }
-
-        // ── Blink / emergency detection ─────────────────
-        this._updateBlinkState(fx, settings);
 
         if (fx.eyeMode === 'none' || !fx.features) {
             this.dwell.noGaze(performance.now());
@@ -446,35 +511,40 @@ const LumiGaze = {
             (settings.activeEye === 'left' && !fx.lOpen) ||
             (settings.activeEye === 'right' && !fx.rOpen);
 
-        const now = Date.now();
+        const now = performance.now();
         if (activeClosed) {
-            if (!this.eyesClosedSince) this.eyesClosedSince = now;
+            if (this.eyesClosedSince === null) this.eyesClosedSince = now;
             const dur = (now - this.eyesClosedSince) / 1000;
-            if (dur >= 3.0 && !this.emergencyAlertTriggered) {
+            // One alarm per closure: the siren keeps sounding until a caregiver
+            // dismisses it; a new alarm needs the eyes to open and close again.
+            if (dur >= 3.0 && !this._closureAlarmed) {
+                this._closureAlarmed = true;
                 this._triggerEmergency('PROLONGED_CLOSURE', `Eyes closed for ${dur.toFixed(1)}s — Unresponsive alert`);
             }
-        } else if (this.eyesClosedSince) {
+        } else if (this.eyesClosedSince !== null) {
             const d = now - this.eyesClosedSince;
             if (d > 50 && d < 800) this._registerBlink(fx.eyeMode);
             this.eyesClosedSince = null;
+            this._closureAlarmed = false;
         }
     },
 
     _registerBlink(eye) {
-        const now = Date.now();
+        const now = performance.now();
         this.blinkHistory.push(now);
         this.blinkHistory = this.blinkHistory.filter(t => now - t < 3000);
         if (this.onBlink) this.onBlink(eye);
-        if (this.blinkHistory.length >= 6 && !this.emergencyAlertTriggered) {
+        if (this.blinkHistory.length >= 6 && now >= this._rapidBlinkQuietUntil) {
+            this._rapidBlinkQuietUntil = now + 15000;
             this._triggerEmergency('RAPID_BLINKS', 'Rapid blinking detected (6× in 3s) — Eye irritation alert');
         }
     },
 
+    /** Log and raise an alert. The only place alerts are logged (AUDIT M7: logging it in
+     *  several places stored each alarm two or three times). */
     _triggerEmergency(type, details) {
-        this.emergencyAlertTriggered = true;
         LumiStore.addAlertLog(type, details);
         if (this.onEmergencyAlert) this.onEmergencyAlert(type, details);
-        setTimeout(() => { this.emergencyAlertTriggered = false; }, 15000);
     },
 
     // ─────────────────────────────────────────────────────

@@ -156,7 +156,7 @@ const LumiKeyboard = {
     },
 
     _nurseCall() {
-        LumiStore.addAlertLog('NURSE_CALL_BUTTON', 'Nurse call button activated by patient via gaze.');
+        // Logged once, by LumiGaze._triggerEmergency (via app.js).
         window.dispatchEvent(new CustomEvent('eye_emergency_alert', {
             detail: { type: 'NURSE_CALL_BUTTON', details: 'Patient pressed Nurse Call button!' }
         }));

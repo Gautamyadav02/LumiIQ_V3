@@ -21,6 +21,7 @@ const LumiStore = {
         voiceVolume: 1.0,       // Speech volume (0.0 to 1.0) — loud & clear
         voiceLanguage: 'en-US', // Default TTS voice locale
         alarmVolume: 0.7,       // Sirens and alarms volume (0.0 to 1.0)
+        faceLostAlarmSec: 10,   // Alarm when no face is seen for this long while tracking
         emergencyContacts: 'Nurse Dashboard, +1 (555) 019-9111',
         swapEyes: false         // Swap left/right for mirrored webcams
     },

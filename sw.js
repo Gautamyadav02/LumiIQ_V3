@@ -1,6 +1,12 @@
-// Bump on every asset change: the fetch handler is cache-first and never
-// revalidates, so a stale CACHE_NAME keeps serving old JS to installed clients.
-const CACHE_NAME = 'lumiiq-v3';
+// Service worker: lets the installed app start when the local server is not
+// running, without ever serving stale code when it is.
+//
+// Strategy: network-first for the app's own files — the server's current
+// version whenever it is reachable, the cached copy only when it is not.
+// (The previous cache-first handler never revalidated, so after a code change
+// browsers kept running the old JavaScript — AUDIT M12.) API requests are
+// never cached. Bump CACHE_NAME when the ASSETS list changes.
+const CACHE_NAME = 'lumiiq-v4';
 const ASSETS = [
     '/',
     '/index.html',
@@ -20,6 +26,10 @@ const ASSETS = [
     '/gaze/gaze-calibration.js',
     '/gaze/drift-detector.js',
     '/lib/mediapipe/vision_bundle.mjs',
+    // MediaPipe's WebAssembly runtime (SIMD build; the no-SIMD fallback is
+    // cached the first time a browser that needs it fetches it).
+    '/lib/mediapipe/wasm/vision_wasm_internal.js',
+    '/lib/mediapipe/wasm/vision_wasm_internal.wasm',
     '/models/face_landmarker.task',
     '/manifest.json',
     '/favicon.ico',
@@ -34,19 +44,25 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
     e.waitUntil(
-        caches.keys().then((keyList) => {
-            return Promise.all(keyList.map((key) => {
-                if (key !== CACHE_NAME) {
-                    return caches.delete(key);
-                }
-            }));
-        })
+        caches.keys().then((keys) =>
+            Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
     );
     self.clients.claim();
 });
 
 self.addEventListener('fetch', (e) => {
+    const url = new URL(e.request.url);
+    // Only the app's own files; API calls and writes go straight to the network.
+    if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
     e.respondWith(
-        caches.match(e.request).then((res) => res || fetch(e.request))
+        fetch(e.request)
+            .then((res) => {
+                if (res.ok) {
+                    const copy = res.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));
+                }
+                return res;
+            })
+            .catch(() => caches.match(e.request).then((cached) => cached || Response.error()))
     );
 });

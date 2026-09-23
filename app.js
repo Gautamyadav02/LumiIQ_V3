@@ -35,6 +35,8 @@ const EyeApp = {
     async init() {
         await LumiStore.init();   // hydrate settings/logs/calibration from server
         LumiVoice.init();         // warm up loud & clear voice engine
+        LumiVoice.onError = (text, reason) =>
+            this._showNotice(`Speech failed (${reason}) — this message was not spoken aloud: "${text}"`, 'error');
         this._createGazeCursor();
         this._renderTab('keyboard');
         this._bindHeaderEvents();

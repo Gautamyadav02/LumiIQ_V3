@@ -3,13 +3,16 @@
  *
  * Wraps the browser SpeechSynthesis API with:
  *  - Maximum volume by default (configurable in settings)
- *  - Automatic selection of the clearest available voice for the language
- *  - Auto language detection (Devanagari -> hi-IN, else English)
+ *  - On-device voices preferred: online voices fail without internet and
+ *    send the patient's words to a cloud speech service
+ *  - Auto language detection (Devanagari -> hi-IN, else the chosen language)
+ *  - Speech failures reported through onError instead of failing silently
  *  - Chrome "stuck speech" resume workaround
  */
 
 const LumiVoice = {
     _voices: [],
+    onError: null,   // (text, reason) — app.js shows a visible warning
 
     init() {
         if (!('speechSynthesis' in window)) {
@@ -24,22 +27,35 @@ const LumiVoice = {
         setTimeout(load, 300);
     },
 
-    /** Pick the clearest, most natural voice for a given language code. */
+    /**
+     * Pick a voice for a language code. Order of preference:
+     *   1. an on-device voice (localService) for the exact locale, e.g. en-GB
+     *   2. an on-device voice for the same language, e.g. any English
+     *   3. an online voice for the locale / language (better than silence)
+     * Among on-device voices, "Premium/Enhanced/Natural/Neural" ones are preferred.
+     */
     _pickVoice(lang) {
         if (!this._voices.length) {
             this._voices = window.speechSynthesis.getVoices() || [];
         }
         if (!this._voices.length) return null;
 
-        const base = (lang || 'en').slice(0, 2).toLowerCase();
-        const matches = this._voices.filter(
-            v => v.lang && v.lang.toLowerCase().startsWith(base)
-        );
-        const pool = matches.length ? matches : this._voices;
+        const want = (lang || 'en-US').toLowerCase();
+        const base = want.slice(0, 2);
+        const voiceLang = v => (v.lang || '').toLowerCase().replace('_', '-');
+        const exact = v => voiceLang(v) === want;
+        const sameLanguage = v => voiceLang(v).startsWith(base);
+        const best = list => list.find(v => /premium|enhanced|natural|neural/i.test(v.name)) || list[0];
 
-        // Prefer high-quality natural voices when present.
-        const preferred = pool.find(v => /google|natural|neural|premium|enhanced/i.test(v.name));
-        return preferred || pool.find(v => v.localService) || pool[0] || null;
+        const local = this._voices.filter(v => v.localService);
+        return best(local.filter(exact)) || best(local.filter(sameLanguage))
+            || this._voices.find(exact) || this._voices.find(sameLanguage)
+            || local[0] || this._voices[0] || null;
+    },
+
+    _fail(text, reason) {
+        console.warn('Speech failed:', reason);
+        if (this.onError) this.onError(text, reason);
     },
 
     /**
@@ -48,7 +64,8 @@ const LumiVoice = {
      * @param {string} [langOverride] - force a BCP-47 lang code
      */
     speak(text, langOverride) {
-        if (!('speechSynthesis' in window) || !text) return;
+        if (!text) return;
+        if (!('speechSynthesis' in window)) { this._fail(text, 'speech is not supported in this browser'); return; }
 
         // Cancel anything already queued so messages never overlap/garble.
         window.speechSynthesis.cancel();
@@ -66,11 +83,18 @@ const LumiVoice = {
         const voice = this._pickVoice(lang);
         if (voice) u.voice = voice;
 
+        u.onerror = (e) => {
+            // Replaced by a newer message (cancel above) — not a failure.
+            if (e.error === 'interrupted' || e.error === 'canceled') return;
+            this._fail(text, e.error || 'unknown error');
+        };
+
         window.speechSynthesis.speak(u);
 
         // Chrome can silently pause the queue — nudge it back awake.
         setTimeout(() => {
-            try { if (window.speechSynthesis.paused) window.speechSynthesis.resume(); } catch (_) {}
+            try { if (window.speechSynthesis.paused) window.speechSynthesis.resume(); }
+            catch (err) { console.warn('Speech resume failed:', err); }
         }, 120);
     }
 };

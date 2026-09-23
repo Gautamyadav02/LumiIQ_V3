@@ -439,21 +439,33 @@ class LumiIQHandler(SimpleHTTPRequestHandler):
         return name in {"localhost", "127.0.0.1", "[::1]"}
 
     def _read_json(self):
-        """Parse a JSON request body, or raise (status, message)."""
-        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if content_type != "application/json":
-            raise _HttpError(415, "Content-Type must be application/json")
+        """Parse a JSON request body, or raise _HttpError."""
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             raise _HttpError(400, "invalid Content-Length") from None
         if length > MAX_BODY_BYTES:
+            self._discard_body(length)
             raise _HttpError(413, "request body too large")
+        # Read the body before any other check: closing a connection with unread
+        # data makes the client see a reset instead of our error response.
         raw = self.rfile.read(length) if length > 0 else b""
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            raise _HttpError(415, "Content-Type must be application/json")
         try:
             return json.loads(raw.decode("utf-8")) if raw else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise _HttpError(400, "body is not valid JSON") from None
+
+    def _discard_body(self, length):
+        """Drop an oversized body (reading at most 1 MB) so the client receives the 413."""
+        remaining = min(length, 4 * MAX_BODY_BYTES)
+        while remaining > 0:
+            chunk = self.rfile.read(min(65536, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
 
     @staticmethod
     def _path(raw_path):

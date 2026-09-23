@@ -66,6 +66,14 @@ function matches(el, selector) {
   return classes.split('.').filter(Boolean).every((c) => el.classList.contains(c));
 }
 
+/** Silent stand-in for Web Audio (the siren), so alarm code runs without sound. */
+class FakeAudioContext {
+  constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
+  resume() { return Promise.resolve(); }
+  createOscillator() { return { connect() {}, start() {}, stop() {}, type: '', frequency: { setValueAtTime() {} } }; }
+  createGain() { return { connect() {}, gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } }; }
+}
+
 class MouseEvent extends Event {
   constructor(type, init = {}) {
     super(type, init);
@@ -168,6 +176,7 @@ function createEnv({ width = 1440, height = 900 } = {}) {
     EventTarget,
     CustomEvent,
     MouseEvent,
+    AudioContext: FakeAudioContext,
     HTMLVideoElement: function HTMLVideoElement() {},
     innerWidth: width,
     innerHeight: height,

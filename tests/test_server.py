@@ -115,8 +115,11 @@ class RequestSecurityTests(ServerCase):
         self.assertEqual(status, 415)
 
     def test_rejects_oversized_bodies(self):
-        status, _ = self.json_request("POST", "/api/logs/typed", {"text": "x" * (300 * 1024)})
+        status, _ = self.json_request("POST", "/api/logs/typed", {"text": "big" + "x" * (300 * 1024)})
         self.assertEqual(status, 413)
+        self.assertEqual(self.request("GET", "/api/health")[0], 200, "server still healthy")
+        _, logs = self.json_request("GET", "/api/logs")
+        self.assertFalse(any(t["text"].startswith("big") for t in logs["typed"]), "nothing stored")
 
     def test_rejects_invalid_json(self):
         self.assertEqual(self.request("POST", "/api/logs/typed", "{not json")[0], 400)

@@ -14,12 +14,6 @@ function setupApp({ logs = {} } = {}) {
     getSymptomLogs: () => logs.symptom || [],
     getAlertLogs: () => logs.alert || [],
   };
-  env.window.AudioContext = class { // silent stand-in for the siren
-    constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
-    resume() { return Promise.resolve(); }
-    createOscillator() { return { connect() {}, start() {}, stop() {}, type: '', frequency: { setValueAtTime() {} } }; }
-    createGain() { return { connect() {}, gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } }; }
-  };
   for (const id of ['gazeCursor', 'statusDot', 'statusText', 'emergencyOverlay', 'emergencyDesc',
                     'dashCommLogs', 'dashAlertLogs']) env.element({ id });
   env.load(...GAZE_MODULES, 'gaze-engine.js', 'app.js');

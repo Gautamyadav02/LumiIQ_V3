@@ -424,7 +424,10 @@ const LumiGaze = {
         this._lastHitTestTime = now;
         const hit = document.elementFromPoint(x, y);
         if (!hit) { this._cachedHitTarget = null; return null; }
-        this._cachedHitTarget = hit.closest('.gazeable') || hit.closest('button') || hit.closest('a[href]') || null;
+        // Only elements explicitly marked .gazeable can be activated by gaze. Plain
+        // buttons (alarm "CAREGIVER CONFIRMED", "Stop Gaze Camera", calibration and
+        // settings controls) are for the caregiver's mouse/touch only.
+        this._cachedHitTarget = hit.closest('.gazeable');
         return this._cachedHitTarget;
     },
 

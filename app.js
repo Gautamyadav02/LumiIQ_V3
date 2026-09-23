@@ -45,6 +45,7 @@ const EyeApp = {
         this._bindAlarmDismiss();
         document.getElementById('noticeClose')?.addEventListener('click', () => this._showNotice(null));
         this._bindCameraButtons();
+        this._bindSleepMode();
         this.updatePill('Disconnected', '');
 
         // Wire up gaze engine callbacks
@@ -55,6 +56,8 @@ const EyeApp = {
         LumiGaze.onEmergencyAlert= (t, d)             => this._onEmergency(t, d);
         LumiGaze.onStatusUpdate  = (m, t)             => this._onStatus(m, t);
         LumiGaze.onNotice        = (m, level)         => this._showNotice(m, level);
+        LumiGaze.onSleepActivity = (what)             => this._onSleepActivity(what);
+        LumiGaze.onSleepModeChange = ()               => this._updateSleepUi();
         LumiGaze.onCalibrationCollect  = (n)          => this._onCalibCollect(n);
         LumiGaze.onCalibrationComplete = (report)     => this._showCalibResults(report);
 
@@ -70,6 +73,7 @@ const EyeApp = {
         });
         
         this.driftDetector = new DriftDetector();
+        this._updateSleepUi();
     },
 
     // ─────────────────────────────────────────────────────
@@ -270,6 +274,60 @@ const EyeApp = {
             this._stopSiren();
             this.updatePill(LumiGaze.isTracking ? 'Active' : 'Disconnected', LumiGaze.isTracking ? 'active' : '');
         });
+    },
+
+    // ─────────────────────────────────────────────────────
+    //  SLEEP MODE (caregiver button; not a gaze target)
+    // ─────────────────────────────────────────────────────
+    _bindSleepMode() {
+        const btn = document.getElementById('sleepModeBtn');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            this._ensureAudioUnlocked();          // so the wake-up chime can play later
+            LumiGaze.setSleepMode(!LumiGaze.isSleepMode());
+            this._updateSleepUi();
+            this._refreshLogs();
+        });
+    },
+
+    _updateSleepUi() {
+        const on = LumiGaze.isSleepMode();
+        const btn = document.getElementById('sleepModeBtn');
+        if (btn) {
+            btn.textContent = on ? '☀️ Turn Sleep Mode Off' : '🌙 Turn Sleep Mode On';
+            btn.classList.toggle('btn-active', on);
+        }
+        const badge = document.getElementById('sleepBadge');
+        if (badge) badge.classList.toggle('hidden', !on);
+    },
+
+    /** The patient became active during sleep mode: tell the caregiver on this device. */
+    _onSleepActivity(what) {
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        this._showNotice(`Patient activity during sleep mode (${time}): ${what}`, 'warning');
+        this._chime();
+        this._refreshLogs();
+    },
+
+    /** A short two-tone chime: an update for the caregiver, gentler than the alarm siren. */
+    _chime() {
+        try {
+            if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+            const s = LumiStore.getSettings();
+            const vol = (s.alarmVolume !== undefined ? s.alarmVolume : 0.7) * 0.4;
+            [660, 880].forEach((freq, i) => {
+                const t = this.audioCtx.currentTime + i * 0.35;
+                const osc = this.audioCtx.createOscillator();
+                const g = this.audioCtx.createGain();
+                osc.connect(g); g.connect(this.audioCtx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, t);
+                g.gain.setValueAtTime(vol, t);
+                g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+                osc.start(t); osc.stop(t + 0.3);
+            });
+        } catch (err) { console.warn('Chime failed:', err); }
     },
 
     // ─────────────────────────────────────────────────────
@@ -568,6 +626,7 @@ const EyeApp = {
         set('set_earThreshold',      s.earThreshold);
         set('set_alarmVolume',       s.alarmVolume !== undefined ? s.alarmVolume : 0.5);
         set('set_faceLostAlarmSec',  s.faceLostAlarmSec !== undefined ? s.faceLostAlarmSec : 10);
+        set('set_sleepWakeSec',      s.sleepWakeSec !== undefined ? s.sleepWakeSec : 5);
         set('set_blinkSelectMs',     s.blinkSelectMs !== undefined ? s.blinkSelectMs : 500);
         set('set_selectionMode',     s.selectionMode || 'both');
         set('set_dwellRepeat',       s.dwellRepeat ? 'true' : 'false');

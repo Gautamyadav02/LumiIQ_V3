@@ -22,6 +22,7 @@ function setupEngine({ calibrated = true, settings = {} } = {}) {
   env.window.LumiStore = {
     settings: { ...DEFAULT_SETTINGS, ...settings },
     getSettings() { return this.settings; },
+    updateSetting(key, value) { this.settings[key] = value; },
     addAlertLog(type, details) { alerts.push({ type, details }); },
     getCalibration() { return null; },
     saveCalibration(c) { this.saved = c; },

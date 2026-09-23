@@ -108,8 +108,12 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
    face detected for a set time (default 10 s), a disconnected camera, Nurse Call and
    Urgent phrases sound a siren **on this device** and are recorded in the safety log.
    No message is sent to anyone else.
-5. **Caregiver Dashboard** — live camera feed, calibration, patient timeline, safety
-   alerts, and full tuning (dwell time, smoothing, active eye, EAR threshold, voice).
+5. **Sleep mode** — a caregiver button for when the patient sleeps: pauses only the
+   eyes-closed alarm (other alarms stay on); waking or any selection is reported with a
+   chime and a Safety Alerts entry. Ends automatically after 12 hours.
+6. **Caregiver Dashboard** — live camera feed, calibration, sleep mode, patient timeline,
+   safety alerts, and tuning (dwell time, selection method, smoothing, active eye, EAR
+   threshold, voice).
 
 ---
 

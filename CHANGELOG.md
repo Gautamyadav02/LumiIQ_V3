@@ -8,10 +8,32 @@ findings in [AUDIT.md](AUDIT.md). The original app is preserved as git tag **`Lu
 Every fix has a regression test, written first and seen to fail on the old code. `npm test` runs:
 - 32 gaze unit tests;
 - the smoke test;
-- 99 Node tests (98 pass, 1 recorded as a known limitation);
-- 25 server tests.
+- 112 Node tests (111 pass, 1 recorded as a known limitation);
+- 26 server tests.
 
 It needs nothing installed.
+
+### Added — sleep mode (caregiver button), at the user's request
+
+- **What it does.** The caregiver turns on **Sleep Mode** (dashboard) when the patient goes to
+  sleep. Only the eyes-closed alarm is paused, because closed eyes are normal in sleep. The no-face,
+  camera-lost and rapid-blinking alarms, Nurse Call and urgent phrases all stay on, so monitoring
+  continues.
+- **Activity reports.** Once the patient has fallen asleep (eyes closed for 30 s), waking up (eyes
+  open for 5 s, adjustable 2–60 s) or any selection is reported to the caregiver once per waking.
+  The report is a chime, a banner and a `SLEEP_ACTIVITY` entry in Safety Alerts. It re-arms when
+  the patient falls asleep again. Turning sleep mode on while the patient is still awake does not
+  trigger a report.
+- **Staying visible.** A 🌙 badge shows in the header while it is on. Switching it on or off is
+  logged (`SLEEP_MODE_ON` / `SLEEP_MODE_OFF`), and it survives a page reload.
+- **Safety net.** It switches itself off after 12 hours, in case it is forgotten, and says so. A
+  stored end time more than 12 hours ahead is ignored.
+- **Limits:**
+  - Reports stay **on this device**; nothing is sent to a phone.
+  - The camera needs some light at night. In the dark it cannot see the face, and the no-face
+    alarm will sound.
+- Tests: `tests/sleep-mode.test.js` (12), an app test, a server test, and the button is on the
+  "not a gaze target" list.
 
 ### Added — blink to select ("blink to write"), at the user's request
 
@@ -162,8 +184,8 @@ original code.
 2. The face-lost alarm fires after 10 s, adjustable 5–60 s (H3): **confirmed**.
 3. Repeating a letter (M3): look away and back is **optional**. Blink to select was added (above),
    and "keep looking to repeat" is a setting.
-4. There is one eyes-closed alarm per closure, and no rest/sleep mode yet (M11): **still open**. A
-   sleeping patient still triggers one alarm per closure.
+4. Eyes-closed alarm while the patient sleeps (M11): **resolved** with the caregiver's Sleep Mode
+   button (above).
 5. Gaze clicks stay off until a calibration is accepted (M5): **confirmed**.
 6. Body map: "Back" is a separate button, and the mirror left/right convention is unchanged (H5):
    **confirmed**.

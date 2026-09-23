@@ -188,6 +188,12 @@ class SettingsTests(ServerCase):
             with self.subTest(bad=bad):
                 self.assertEqual(self.json_request("PUT", "/api/settings", bad)[0], 400)
 
+    def test_sleep_settings_are_validated(self):
+        self.assertEqual(self.json_request("PUT", "/api/settings", {"sleepWakeSec": 10, "sleepModeUntil": 0})[0], 200)
+        for bad in [{"sleepWakeSec": 0}, {"sleepModeUntil": -1}, {"sleepModeUntil": "tonight"}]:
+            with self.subTest(bad=bad):
+                self.assertEqual(self.json_request("PUT", "/api/settings", bad)[0], 400)
+
     def test_unknown_keys_are_ignored(self):
         self.json_request("PUT", "/api/settings", {"gazeSensitivityX": 2, "evil": "<script>"})
         _, settings = self.json_request("GET", "/api/settings")

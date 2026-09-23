@@ -78,6 +78,8 @@ SETTINGS_SCHEMA = {
     "selectionMode":   ("choice", {"both", "dwell", "blink"}),
     "blinkSelectMs":   ("number", (300, 1200)),
     "dwellRepeat":     ("bool", None),
+    "sleepWakeSec":    ("number", (2, 60)),
+    "sleepModeUntil":  ("number", (0, 1e13)),   # epoch ms; the app never sets it > 12 h ahead
     "swapEyes":        ("bool", None),
 }
 
@@ -95,6 +97,8 @@ DEFAULT_SETTINGS = {
     "selectionMode": "both",      # select by dwell or by a deliberate blink
     "blinkSelectMs": 500,         # eyes closed at least this long = a deliberate blink
     "dwellRepeat": False,         # keep looking at a key to repeat it
+    "sleepWakeSec": 5,            # sleep mode: eyes open this long = activity report
+    "sleepModeUntil": 0,          # sleep mode end time (epoch ms); 0 = off
     "swapEyes": False,
 }
 

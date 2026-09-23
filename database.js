@@ -28,6 +28,8 @@ const LumiStore = {
         selectionMode: 'both',  // 'both' (dwell or blink), 'dwell' or 'blink'
         blinkSelectMs: 500,     // Eyes closed at least this long (and < 1.5 s) = deliberate blink
         dwellRepeat: false,     // Keep looking at a key to repeat it (else look away, or blink)
+        sleepWakeSec: 5,        // Sleep mode: eyes open this long after sleeping = activity report
+        sleepModeUntil: 0,      // Sleep mode end time (epoch ms); 0 = off. Max 12 h ahead
         swapEyes: false         // Swap left/right for mirrored webcams
     },
 

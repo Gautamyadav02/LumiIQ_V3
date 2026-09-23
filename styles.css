@@ -403,7 +403,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     gap: 20px;
     width: 100%; height: 100%;
 }
-.dash-left  { display: flex; flex-direction: column; gap: 16px; }
+.dash-left  { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .dash-right { display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
 
 .dash-card {
@@ -652,6 +652,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     transition: transform .2s;
 }
 .alarm-dismiss-btn:hover { transform: scale(1.04); }
+
+/* ── Sleep mode badge (header) ── */
+.sleep-badge {
+    background: rgba(99,102,241,0.15); border: 1px solid rgba(129,140,248,0.6);
+    color: #c7d2fe; padding: 6px 12px; border-radius: 20px;
+    font-size: 0.85rem; font-weight: 600; white-space: nowrap;
+}
 
 /* ── Persistent caregiver notice ── */
 .notice-banner {

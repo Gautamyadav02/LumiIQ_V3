@@ -40,6 +40,8 @@
             </button>
         </nav>
 
+        <span class="sleep-badge hidden" id="sleepBadge" title="Sleep mode: eyes-closed alarm paused, all other alarms on">🌙 Sleep mode</span>
+
         <div class="status-pill" id="statusPill">
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">Disconnected</span>
@@ -77,6 +79,11 @@
                             <canvas id="caregiverCanvas" class="feed-canvas" width="640" height="480"></canvas>
                         </div>
                         <button class="dash-btn" id="startCameraBtn">Start Gaze Camera</button>
+                    </div>
+                    <div class="dash-card">
+                        <h3>Sleep Mode</h3>
+                        <p class="muted-text">For when the patient sleeps. Pauses only the eyes-closed alarm; all other alarms stay on. Once the patient has slept, waking (eyes open) or any selection sounds a chime here and is logged in Safety Alerts. Ends automatically after 12 hours. Nothing is sent off this device.</p>
+                        <button class="dash-btn" id="sleepModeBtn">🌙 Turn Sleep Mode On</button>
                     </div>
                     <div class="dash-card">
                         <h3>Gaze Calibration</h3>
@@ -176,6 +183,13 @@
                                 <div class="slider-row">
                                     <input type="range" id="set_faceLostAlarmSec" min="5" max="60" step="5">
                                     <span class="slider-val" id="set_faceLostAlarmSec_val">10</span>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="set_sleepWakeSec">Sleep mode: report eyes open after (s)</label>
+                                <div class="slider-row">
+                                    <input type="range" id="set_sleepWakeSec" min="2" max="60" step="1">
+                                    <span class="slider-val" id="set_sleepWakeSec_val">5</span>
                                 </div>
                             </div>
                             <div class="settings-field">

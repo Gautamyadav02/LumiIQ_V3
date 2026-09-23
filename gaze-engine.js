@@ -74,6 +74,15 @@ const LumiGaze = {
     _settled: null,               // { target, at }: last target the gaze had rested on
     _blinkCandidate: null,        // target to select if the current closure is a deliberate blink
 
+    // Sleep mode (caregiver button): pauses only the eyes-closed alarm. All other
+    // monitoring stays on, and once the patient has fallen asleep, activity (eyes
+    // open for settings.sleepWakeSec, or a selection) is reported once per waking.
+    SLEEP_MAX_MS: 12 * 3600 * 1000,   // ends by itself after 12 h, in case it is forgotten
+    SLEEP_ASLEEP_MS: 30000,           // eyes closed this long = asleep; arms the wake report
+    _eyesOpenSince: null,
+    _sleepClosedSince: null,
+    _wakeReportArmed: false,
+
     // Callbacks (wired by app.js)
     onGazeUpdate: null,          // (x, y, eyeMode, state)
     onBlink: null,               // (whichEye)
@@ -82,6 +91,8 @@ const LumiGaze = {
     onEmergencyAlert: null,      // (type, details)
     onStatusUpdate: null,        // (message, type)
     onNotice: null,              // (message | null, level) persistent notice for the caregiver; null clears it
+    onSleepActivity: null,       // (description) patient activity during sleep mode
+    onSleepModeChange: null,     // (isOn) sleep mode switched, e.g. ended after 12 h
     onCalibrationCollect: null,  // (sampleCount)
     onCalibrationComplete: null, // (report)
 
@@ -165,7 +176,10 @@ const LumiGaze = {
             hitTest: (x, y) => this._hitTest(x, y),
             getRect: (el) => el.getBoundingClientRect(),
             onProgress: (el, p) => { if (this.onDwellProgress) this.onDwellProgress(el, p); },
-            onActivate: (el) => { if (this.onDwellClick) this.onDwellClick(el); }
+            onActivate: (el) => {
+                this._noteSleepSelection(el);
+                if (this.onDwellClick) this.onDwellClick(el);
+            }
         });
         window.addEventListener('resize', () => {
             if (this.stabilizer) this.stabilizer.setBounds(window.innerWidth, window.innerHeight);
@@ -339,6 +353,7 @@ const LumiGaze = {
     /** Handle one MediaPipe result: a face → the full pipeline; no face → no gaze this frame. */
     _onFrame(result) {
         const now = performance.now();
+        this._checkSleepExpiry();
         const lm = result.faceLandmarks && result.faceLandmarks[0];
         const matrix = result.facialTransformationMatrixes && result.facialTransformationMatrixes[0];
         if (lm) {
@@ -562,6 +577,7 @@ const LumiGaze = {
         this._blinkCandidate = null;
         if (!target || !this.isCalibrated || this.isCalibrating || target.isConnected === false) return;
         this.dwell.markActivated(target, now);   // so dwell does not click it again at once
+        this._noteSleepSelection(target);
         if (this.onDwellClick) this.onDwellClick(target);
     },
 
@@ -604,6 +620,7 @@ const LumiGaze = {
             (settings.activeEye === 'right' && !fx.rOpen);
 
         const now = performance.now();
+        const sleeping = this.isSleepMode();
         const blinkSelectOn = this._selectionMode(settings) !== 'dwell';
         const blinkSelectMs = settings.blinkSelectMs || 500;
         if (activeClosed) {
@@ -616,7 +633,7 @@ const LumiGaze = {
             const dur = (now - this.eyesClosedSince) / 1000;
             // One alarm per closure: the siren keeps sounding until a caregiver
             // dismisses it; a new alarm needs the eyes to open and close again.
-            if (dur >= 3.0 && !this._closureAlarmed) {
+            if (dur >= 3.0 && !this._closureAlarmed && !sleeping) {
                 this._closureAlarmed = true;
                 this._triggerEmergency('PROLONGED_CLOSURE', `Eyes closed for ${dur.toFixed(1)}s — Unresponsive alert`);
             }
@@ -631,6 +648,7 @@ const LumiGaze = {
             this.eyesClosedSince = null;
             this._closureAlarmed = false;
         }
+        this._updateSleepActivity(!activeClosed, settings, now, sleeping);
     },
 
     _registerBlink(eye) {
@@ -642,6 +660,81 @@ const LumiGaze = {
             this._rapidBlinkQuietUntil = now + 15000;
             this._triggerEmergency('RAPID_BLINKS', 'Rapid blinking detected (6× in 3s) — Eye irritation alert');
         }
+    },
+
+    // ─────────────────────────────────────────────────────
+    //  SLEEP MODE
+    // ─────────────────────────────────────────────────────
+    /** Wall-clock ms: sleep mode must survive a page reload. Separate so tests can replace it. */
+    _wallNow() { return Date.now(); },
+
+    /** True while sleep mode is on. A stored end time more than 12 h ahead is not trusted. */
+    isSleepMode() {
+        const until = (this._cachedSettings || LumiStore.getSettings()).sleepModeUntil || 0;
+        const left = until - this._wallNow();
+        return left > 0 && left <= this.SLEEP_MAX_MS + 60000;
+    },
+
+    /** Caregiver button. On: pause only the eyes-closed alarm, for at most 12 hours. */
+    setSleepMode(on) {
+        LumiStore.updateSetting('sleepModeUntil', on ? this._wallNow() + this.SLEEP_MAX_MS : 0);
+        this._eyesOpenSince = null;
+        this._sleepClosedSince = null;
+        this._wakeReportArmed = false;          // armed once the patient has fallen asleep
+        if (!on) this._restartClosureTimer();
+        LumiStore.addAlertLog(on ? 'SLEEP_MODE_ON' : 'SLEEP_MODE_OFF', on
+            ? 'Sleep mode on: eyes-closed alarm paused, other alarms on; ends automatically after 12 hours'
+            : 'Sleep mode off: all alarms on');
+        if (this.onSleepModeChange) this.onSleepModeChange(on);
+        return on;
+    },
+
+    /** When sleep mode ends with the eyes already closed, alarm only after 3 more seconds. */
+    _restartClosureTimer() {
+        if (this.eyesClosedSince !== null) this.eyesClosedSince = performance.now();
+        this._closureAlarmed = false;
+    },
+
+    /** Turn sleep mode off, and say so, once its 12 hours are over. */
+    _checkSleepExpiry() {
+        const settings = this._cachedSettings || LumiStore.getSettings();
+        if (!settings.sleepModeUntil || this.isSleepMode()) return;
+        LumiStore.updateSetting('sleepModeUntil', 0);
+        this._restartClosureTimer();
+        LumiStore.addAlertLog('SLEEP_MODE_OFF', 'Sleep mode ended automatically (12-hour limit): all alarms on');
+        this._notice('Sleep mode ended automatically after 12 hours: all alarms are on.', 'warning');
+        if (this.onSleepModeChange) this.onSleepModeChange(false);
+    },
+
+    /** In sleep mode: arm after 30 s asleep; report eyes open for sleepWakeSec (once per waking). */
+    _updateSleepActivity(eyesOpen, settings, now, sleeping) {
+        if (!sleeping) { this._eyesOpenSince = null; this._sleepClosedSince = null; return; }
+        if (eyesOpen) {
+            this._sleepClosedSince = null;
+            if (this._eyesOpenSince === null) this._eyesOpenSince = now;
+            const secs = (now - this._eyesOpenSince) / 1000;
+            if (secs >= (settings.sleepWakeSec || 5)) this._reportSleepActivity(`eyes open for ${Math.round(secs)}s`);
+        } else {
+            this._eyesOpenSince = null;
+            if (this._sleepClosedSince === null) this._sleepClosedSince = now;
+            if (now - this._sleepClosedSince >= this.SLEEP_ASLEEP_MS) this._wakeReportArmed = true;
+        }
+    },
+
+    /** A selection during sleep mode is activity too. */
+    _noteSleepSelection(el) {
+        if (!this.isSleepMode()) return;
+        const d = (el && el.dataset) || {};
+        const label = String(d.key || d.text || d.part || (el && el.textContent) || '').trim().slice(0, 40);
+        this._reportSleepActivity(`selected "${label || 'a button'}"`);
+    },
+
+    /** Tell the caregiver (on this device: log + callback → banner and chime), once per waking. */
+    _reportSleepActivity(what) {
+        if (!this._wakeReportArmed) return;
+        this._wakeReportArmed = false;
+        LumiStore.addAlertLog('SLEEP_ACTIVITY', `Patient activity during sleep mode: ${what}`);
+        if (this.onSleepActivity) this.onSleepActivity(what);
     },
 
     /** Log and raise an alert. The only place alerts are logged (AUDIT M7: logging it in

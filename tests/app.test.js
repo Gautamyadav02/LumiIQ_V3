@@ -7,8 +7,10 @@ const { createEnv, GAZE_MODULES } = require('./helpers/browser-env');
 
 function setupApp({ logs = {} } = {}) {
   const env = createEnv();
+  const settings = { dwellTimeMs: 1200, smoothingFactor: 0.35, activeEye: 'both', earThreshold: 0.18 };
   env.window.LumiStore = {
-    getSettings: () => ({ dwellTimeMs: 1200, smoothingFactor: 0.35, activeEye: 'both', earThreshold: 0.18 }),
+    getSettings: () => settings,
+    updateSetting: (k, v) => { settings[k] = v; },
     addAlertLog() {},
     getTypedLogs: () => logs.typed || [],
     getSymptomLogs: () => logs.symptom || [],
@@ -86,4 +88,21 @@ test('M6: the results screen offers "Accept" only for a successful calibration',
   assert.match(button(), /keep previous calibration/i);
   app._showCalibResults({ ok: true, rating: 'Good', confidence: 85, accuracyPx: 120, samples: 200, r2: 0.85 });
   assert.match(button(), /accept/i);
+});
+
+// ── Sleep mode (caregiver button) ───────────────────────────────────
+test('sleep mode: the button and header badge show the state; activity shows a notice', () => {
+  const { env, app } = setupApp();
+  for (const id of ['sleepModeBtn', 'sleepBadge', 'noticeBanner', 'noticeText']) env.element({ id });
+  const badge = env.document.getElementById('sleepBadge');
+  badge.classList.add('hidden');
+  env.get('LumiGaze').setSleepMode(true);
+  app._updateSleepUi();
+  assert.match(env.document.getElementById('sleepModeBtn').textContent, /Turn Sleep Mode Off/);
+  assert.equal(badge.classList.contains('hidden'), false, 'badge visible while on');
+  app._onSleepActivity('eyes open for 5s');
+  assert.match(env.document.getElementById('noticeText').textContent, /activity during sleep mode .*eyes open for 5s/);
+  env.get('LumiGaze').setSleepMode(false);
+  app._updateSleepUi();
+  assert.equal(badge.classList.contains('hidden'), true, 'badge hidden when off');
 });

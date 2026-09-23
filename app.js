@@ -519,7 +519,8 @@ const EyeApp = {
         const alertBox = document.getElementById('dashAlertLogs');
 
         if (commBox) {
-            const typed   = LumiStore.getTypedLogs().map(l => ({ ...l, disp: `Typed: "${l.text}"` }));
+            // Keyboard SPEAK and phrase selections — everything the patient said.
+            const typed   = LumiStore.getTypedLogs().map(l => ({ ...l, disp: `Said: "${l.text}"` }));
             const syms    = LumiStore.getSymptomLogs().map(s => ({ ...s, disp: `Symptom: ${s.bodyPart} — ${s.symptom}` }));
             const all     = [...typed, ...syms].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
             commBox.innerHTML = all.length

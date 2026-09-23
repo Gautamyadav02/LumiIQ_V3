@@ -566,8 +566,6 @@ const EyeApp = {
         set('set_smoothingFactor',   s.smoothingFactor);
         set('set_activeEye',         s.activeEye);
         set('set_earThreshold',      s.earThreshold);
-        set('set_gazeSensitivityX',  s.gazeSensitivityX);
-        set('set_gazeSensitivityY',  s.gazeSensitivityY);
         set('set_alarmVolume',       s.alarmVolume !== undefined ? s.alarmVolume : 0.5);
         set('set_faceLostAlarmSec',  s.faceLostAlarmSec !== undefined ? s.faceLostAlarmSec : 10);
         set('set_voiceRate',         s.voiceRate !== undefined ? s.voiceRate : 0.95);

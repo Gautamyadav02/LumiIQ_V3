@@ -19,15 +19,12 @@ const LumiStore = {
         smoothingFactor: 0.35,  // Exponential moving average — higher = faster cursor tracking
         activeEye: 'both',      // 'both', 'left', 'right' (single-eye fallback)
         earThreshold: 0.18,     // Eye Aspect Ratio threshold below which eye is considered closed
-        gazeSensitivityX: 1.2,  // Multiplier for horizontal calibration scale
-        gazeSensitivityY: 1.2,  // Multiplier for vertical calibration scale
         voiceRate: 0.95,        // Speech rate (0.5 to 2)
         voicePitch: 1.0,        // Speech pitch (0.5 to 2)
         voiceVolume: 1.0,       // Speech volume (0.0 to 1.0) — loud & clear
         voiceLanguage: 'en-US', // Default TTS voice locale
         alarmVolume: 0.7,       // Sirens and alarms volume (0.0 to 1.0)
         faceLostAlarmSec: 10,   // Alarm when no face is seen for this long while tracking
-        emergencyContacts: 'Nurse Dashboard, +1 (555) 019-9111',
         swapEyes: false         // Swap left/right for mirrored webcams
     },
 

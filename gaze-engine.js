@@ -74,26 +74,46 @@ const LumiGaze = {
     // ─────────────────────────────────────────────────────
     //  INIT — load MediaPipe + construct V3 subsystems
     // ─────────────────────────────────────────────────────
-    async init(videoElement) {
+    /** Load MediaPipe once; concurrent or repeated calls share the same load. */
+    init(videoElement) {
+        if (!this._initPromise) {
+            this._initPromise = this._load(videoElement).then((ok) => {
+                if (!ok) this._initPromise = null;   // allow a retry after a failure
+                return ok;
+            });
+        }
+        return this._initPromise;
+    },
+
+    /** Separate so tests can replace it; the browser loads the vendored MediaPipe bundle. */
+    _importVision() {
+        return import('/lib/mediapipe/vision_bundle.mjs');
+    },
+
+    /** Create the landmarker on the GPU if possible, else on the CPU (slower, works everywhere). */
+    async _createLandmarker(FaceLandmarker, vision) {
+        const options = (delegate) => ({
+            baseOptions: { modelAssetPath: '/models/face_landmarker.task', delegate },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+            outputFaceBlendshapes: false,
+            outputFacialTransformationMatrixes: true   // ← head pose (yaw/pitch/roll)
+        });
+        try {
+            return await FaceLandmarker.createFromOptions(vision, options('GPU'));
+        } catch (err) {
+            console.warn('GPU face tracking unavailable, using the CPU instead:', err);
+            return await FaceLandmarker.createFromOptions(vision, options('CPU'));
+        }
+    },
+
+    async _load(videoElement) {
         this.videoElement = videoElement;
         this.updateStatus('Loading AI Face Mesh…', 'info');
         try {
-            const { FaceLandmarker, FilesetResolver } = await import(
-                '/lib/mediapipe/vision_bundle.mjs'
-            );
-            const vision = await FilesetResolver.forVisionTasks(
-                '/lib/mediapipe/wasm'
-            );
-            this.faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-                baseOptions: {
-                    modelAssetPath: '/models/face_landmarker.task',
-                    delegate: 'GPU'
-                },
-                runningMode: 'VIDEO',
-                numFaces: 1,
-                outputFaceBlendshapes: false,
-                outputFacialTransformationMatrixes: true   // ← head pose (yaw/pitch/roll)
-            });
+            const { FaceLandmarker, FilesetResolver } = await this._importVision();
+            const vision = await FilesetResolver.forVisionTasks('/lib/mediapipe/wasm');
+            this.faceLandmarker = await this._createLandmarker(FaceLandmarker, vision);
 
             this._buildSubsystems();
             this.isInitialized = true;
@@ -113,7 +133,7 @@ const LumiGaze = {
             return true;
         } catch (err) {
             console.error('LumiGaze init failed:', err);
-            this.updateStatus('Failed to load AI engine. Check internet.', 'error');
+            this.updateStatus('Failed to load the face-tracking engine (lib/mediapipe, models/). See the browser console.', 'error');
             return false;
         }
     },
@@ -165,6 +185,8 @@ const LumiGaze = {
     // ─────────────────────────────────────────────────────
     async startCamera() {
         if (!this.isInitialized) { this.updateStatus('Init LumiGaze first.', 'error'); return false; }
+        if (this.isTracking || this._starting) return false;   // already running or starting
+        this._starting = true;
         try {
             this.stream = await navigator.mediaDevices.getUserMedia({
                 video: {
@@ -184,11 +206,11 @@ const LumiGaze = {
             const track = this.stream.getVideoTracks()[0];
             // Fires when the camera goes away (unplugged, permission revoked) — not on stopCamera().
             track.addEventListener('ended', () => this._onCameraLost());
-            const capabilities = track.getCapabilities();
+            const capabilities = typeof track.getCapabilities === 'function' ? track.getCapabilities() : {};
             if (capabilities.exposureMode) {
                 try {
                     await track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] });
-                } catch(e) {}
+                } catch (e) { console.warn('Continuous exposure not applied:', e); }
             }
             this.videoElement.srcObject = this.stream;
             await new Promise(resolve =>
@@ -203,8 +225,24 @@ const LumiGaze = {
             return true;
         } catch (err) {
             console.error('Camera error:', err);
-            this.updateStatus('Camera permission denied.', 'error');
+            if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+            this.updateStatus(this._cameraErrorMessage(err), 'error');
             return false;
+        } finally {
+            this._starting = false;
+        }
+    },
+
+    /** Say what actually went wrong (getUserMedia error names), not always "permission denied". */
+    _cameraErrorMessage(err) {
+        switch (err && err.name) {
+            case 'NotAllowedError':
+            case 'SecurityError':        return 'Camera permission denied — allow camera access for this page.';
+            case 'NotFoundError':
+            case 'OverconstrainedError': return 'No suitable camera found — connect a webcam.';
+            case 'NotReadableError':
+            case 'AbortError':           return 'The camera is in use by another app, or could not start.';
+            default:                     return `The camera could not start (${(err && (err.name || err.message)) || 'unknown error'}).`;
         }
     },
 

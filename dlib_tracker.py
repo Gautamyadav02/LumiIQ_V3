@@ -3,32 +3,29 @@ import dlib
 import numpy as np
 import bz2
 import os
-import ssl
 import urllib.request
 from scipy.spatial import distance as dist
 
 MODEL_PATH = "shape_predictor_68_face_landmarks.dat"
 
-# Download Dlib model if not present (with SSL bypass for macOS)
+# Download the dlib model if not present. Certificates are verified: a 100 MB
+# binary fetched without verification could be swapped in transit. If macOS
+# Python reports a certificate error, run "Install Certificates.command" from
+# the Python folder in Applications — do not disable verification.
 if not os.path.exists(MODEL_PATH):
     print("Downloading Dlib shape predictor model...")
     url = "https://github.com/tzutalin/dlib-android/raw/master/data/shape_predictor_68_face_landmarks.dat"
-    
-    # Bypass macOS SSL verification
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    
+
     try:
-        with urllib.request.urlopen(url, context=ctx) as response:
+        with urllib.request.urlopen(url) as response:
             with open(MODEL_PATH, "wb") as out_file:
                 out_file.write(response.read())
         print("Download complete.")
     except Exception as e:
         print(f"Direct download failed: {e}")
         print("Fallback: Attempting compressed dlib source...")
-        alt_url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
-        with urllib.request.urlopen(alt_url, context=ctx) as response:
+        alt_url = "https://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+        with urllib.request.urlopen(alt_url) as response:
             with bz2.BZ2File(response) as bz_file:
                 with open(MODEL_PATH, "wb") as out_file:
                     out_file.write(bz_file.read())

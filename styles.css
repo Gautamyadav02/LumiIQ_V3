@@ -3,7 +3,9 @@
    All interactive elements large enough for gaze targeting
    ──────────────────────────────────────────────────────────────────── */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+/* Fonts: Inter/Outfit are used if installed on the device, otherwise system
+   fonts. They are no longer fetched from Google on every load (that sent the
+   user's IP address to a third party and needed internet — AUDIT L9). */
 
 /* ─── TOKENS ────────────────────────────────────────────── */
 :root {
@@ -18,8 +20,8 @@
     --green:    #10B981;
     --text:     #F3F4F6;
     --muted:    #6B7280;
-    --ff-body:  'Inter', sans-serif;
-    --ff-head:  'Outfit', sans-serif;
+    --ff-body:  'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --ff-head:  'Outfit', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     --ease:     cubic-bezier(.4,0,.2,1);
 }
 

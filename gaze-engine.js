@@ -120,6 +120,7 @@ const LumiGaze = {
             dwellTime: s.dwellTimeMs,
             adaptive: true,
             hitTest: (x, y) => this._hitTest(x, y),
+            getRect: (el) => el.getBoundingClientRect(),
             onProgress: (el, p) => { if (this.onDwellProgress) this.onDwellProgress(el, p); },
             onActivate: (el) => { if (this.onDwellClick) this.onDwellClick(el); }
         });
@@ -211,11 +212,7 @@ const LumiGaze = {
                 if (!this.isTracking) return;
                 try {
                     if (this.videoElement.readyState >= 2) {
-                        const r = this.faceLandmarker.detectForVideo(this.videoElement, now);
-                        const lm = r.faceLandmarks && r.faceLandmarks[0];
-                        const matrix = r.facialTransformationMatrixes && r.facialTransformationMatrixes[0];
-                        if (lm) this._processLandmarks(lm, matrix);
-                        else if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
+                        this._onFrame(this.faceLandmarker.detectForVideo(this.videoElement, now));
                     }
                 } catch (e) { console.error('Frame error:', e); }
                 this.videoElement.requestVideoFrameCallback(onVideoFrame);
@@ -228,11 +225,7 @@ const LumiGaze = {
                 if (now !== this._lastFrameTime) {
                     try {
                         if (this.videoElement.readyState >= 2) {
-                            const r = this.faceLandmarker.detectForVideo(this.videoElement, now);
-                            const lm = r.faceLandmarks && r.faceLandmarks[0];
-                            const matrix = r.facialTransformationMatrixes && r.facialTransformationMatrixes[0];
-                            if (lm) this._processLandmarks(lm, matrix);
-                            else if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
+                            this._onFrame(this.faceLandmarker.detectForVideo(this.videoElement, now));
                         }
                     } catch (e) { console.error('Frame error:', e); }
                     this._lastFrameTime = now;
@@ -241,6 +234,16 @@ const LumiGaze = {
             };
             requestAnimationFrame(step);
         }
+    },
+
+    /** Handle one MediaPipe result: a face → the full pipeline; no face → no gaze this frame. */
+    _onFrame(result) {
+        const lm = result.faceLandmarks && result.faceLandmarks[0];
+        const matrix = result.facialTransformationMatrixes && result.facialTransformationMatrixes[0];
+        if (lm) { this._processLandmarks(lm, matrix); return; }
+        // Tell the dwell controller: a long enough gap cancels any dwell in progress.
+        if (this.dwell) this.dwell.noGaze(performance.now());
+        if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
     },
 
     // ─────────────────────────────────────────────────────
@@ -371,12 +374,14 @@ const LumiGaze = {
         this._updateBlinkState(fx, settings);
 
         if (fx.eyeMode === 'none' || !fx.features) {
+            this.dwell.noGaze(performance.now());
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Eyes closed', this.lastConfidence);
             return;
         }
         this.rawRatios = fx.rawRatios;
 
         if (this.lastConfidence < 0.2) {
+            this.dwell.noGaze(performance.now());
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, fx.eyeMode, 'low_confidence', this.lastConfidence);
             return;
         }

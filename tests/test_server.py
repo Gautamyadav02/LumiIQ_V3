@@ -70,7 +70,7 @@ class DefaultsTests(unittest.TestCase):
 
 class StaticFileTests(ServerCase):
     def test_serves_the_app_files(self):
-        for path in ["/", "/index.html", "/app.js", "/gaze/dwell-controller.js",
+        for path in ["/", "/index.html", "/app.js", "/diagnostics.js", "/gaze/dwell-controller.js",
                      "/lib/mediapipe/vision_bundle.mjs", "/models/face_landmarker.task", "/icons/icon-192.png"]:
             with self.subTest(path=path):
                 self.assertEqual(self.request("GET", path)[0], 200)

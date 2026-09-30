@@ -112,7 +112,7 @@ ALERT_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,39}$")
 STATIC_FILES = {
     "/", "/index.html", "/styles.css", "/manifest.json", "/sw.js", "/favicon.ico",
     "/app.js", "/database.js", "/dictionary.js", "/voice.js", "/gaze-engine.js",
-    "/keyboard.js", "/body-map.js", "/phrases.js",
+    "/keyboard.js", "/body-map.js", "/phrases.js", "/diagnostics.js",
 }
 STATIC_DIRS = {
     "/gaze/": {".js"},

@@ -18,7 +18,7 @@ test('index.html loads the scripts this test expects, in this order', () => {
     'database.js', 'dictionary.js', 'voice.js',
     'gaze/one-euro-filter.js', 'gaze/ridge-regression.js', 'gaze/gaze-stabilizer.js',
     'gaze/dwell-controller.js', 'gaze/gaze-calibration.js', 'gaze/drift-detector.js',
-    'gaze-engine.js', 'keyboard.js', 'body-map.js', 'phrases.js', 'app.js',
+    'gaze-engine.js', 'keyboard.js', 'body-map.js', 'phrases.js', 'diagnostics.js', 'app.js',
   ]);
 });
 
@@ -27,8 +27,19 @@ test('every script loads in order and defines its global', () => {
   env.load(...scriptsFromIndexHtml());
   const globals = ['LumiStore', 'LumiDictionary', 'LumiVoice', 'OneEuroFilter', 'RidgeRegressor',
     'GazeStabilizer', 'DwellController', 'GazeCalibration', 'DriftDetector', 'LumiGaze',
-    'LumiKeyboard', 'LumiBodyMap', 'LumiPhrases', 'EyeApp'];
+    'LumiKeyboard', 'LumiBodyMap', 'LumiPhrases', 'LumiDiagnostics', 'EyeApp'];
   for (const name of globals) {
     assert.notEqual(env.get(`typeof ${name}`), 'undefined', `${name} should be defined`);
+  }
+});
+
+test('every script index.html loads is precached by the service worker and served by server.py', () => {
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  const server = fs.readFileSync(path.join(ROOT, 'server.py'), 'utf8');
+  const staticFiles = server.match(/STATIC_FILES = \{([\s\S]*?)\}/)[1];
+  for (const src of scriptsFromIndexHtml()) {
+    assert.ok(sw.includes(`'/${src}'`), `sw.js ASSETS should list /${src}`);
+    const inDir = /^gaze\//.test(src) && /"\/gaze\/": \{"\.js"\}/.test(server);
+    assert.ok(inDir || staticFiles.includes(`"/${src}"`), `server.py should serve /${src}`);
   }
 });

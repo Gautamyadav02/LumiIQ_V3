@@ -117,3 +117,12 @@ test('onFrameInfo is called once per camera frame', () => {
   ctx.gaze._onFrame({ faceLandmarks: [] }); // 1 without a face
   assert.equal(calls, 11);
 });
+
+test('the raw iris-in-eye ratio is recorded (what the uncalibrated cursor and the direction inset use)', () => {
+  const ctx = setupEngine();
+  feedFrames(ctx, 100, { irisX: 0.7, irisY: 0.4 });
+  const raw = lastInfo(ctx).raw;
+  assert.ok(Math.abs(raw.x - 0.7) < 1e-4 && Math.abs(raw.y - 0.4) < 1e-4);
+  feedFrames(ctx, 100, EYES_CLOSED);
+  assert.equal(lastInfo(ctx).raw, null, 'no ratio without a usable eye');
+});

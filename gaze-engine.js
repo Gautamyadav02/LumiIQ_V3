@@ -380,7 +380,7 @@ const LumiGaze = {
         if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
         const settings = this._cachedSettings || LumiStore.getSettings();
         this._reportFrame({ t: now, face: false, eyes: [], pose: null, confidence: 0, eyeMode: 'none',
-                            earThreshold: settings.earThreshold }, 'no_face');
+                            earThreshold: settings.earThreshold, raw: null }, 'no_face');
     },
 
     /**
@@ -404,6 +404,7 @@ const LumiGaze = {
         return {
             t: performance.now(), face: true, eyes, pose: { yaw, pitch, roll },
             confidence: this.lastConfidence, eyeMode: fx.eyeMode, earThreshold: settings.earThreshold,
+            raw: fx.rawRatios || null,   // iris-in-eye ratio of the eyes in use (features' average)
         };
     },
 

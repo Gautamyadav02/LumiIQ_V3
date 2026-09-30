@@ -47,6 +47,7 @@ const EyeApp = {
         this._bindCameraButtons();
         this._bindSleepMode();
         this._bindResetSettings();
+        this._bindDiagnostics();
         this.updatePill('Disconnected', '');
 
         // Wire up gaze engine callbacks
@@ -57,6 +58,7 @@ const EyeApp = {
         LumiGaze.onEmergencyAlert= (t, d)             => this._onEmergency(t, d);
         LumiGaze.onStatusUpdate  = (m, t)             => this._onStatus(m, t);
         LumiGaze.onNotice        = (m, level)         => this._showNotice(m, level);
+        LumiGaze.onFrameInfo     = (info)             => this._onFrameInfo(info);
         LumiGaze.onSleepActivity = (what)             => this._onSleepActivity(what);
         LumiGaze.onSleepModeChange = ()               => this._updateSleepUi();
         LumiGaze.onCalibrationCollect  = (n)          => this._onCalibCollect(n);
@@ -111,7 +113,6 @@ const EyeApp = {
         if (tabKey === 'phrases')    LumiPhrases.render('phrasesScreen');
         if (tabKey === 'bodymap')    LumiBodyMap.render('bodymapScreen');
         if (tabKey === 'dashboard')  {
-            this._setupCanvas();
             this._loadSettingsValues();
             this._refreshLogs();
             // Pull the freshest logs from the server, then re-render.
@@ -150,8 +151,6 @@ const EyeApp = {
             else if (moderate) this.updatePill(`Tracking: Fair (${Math.round(conf * 100)}%)`, 'active');
             else this.updatePill(`Tracking: ${label}`, 'active');
         }
-
-        this._drawCanvasTarget();
     },
 
     _onDwellProgress(el, progress) {
@@ -341,6 +340,7 @@ const EyeApp = {
                 this._ensureAudioUnlocked();
                 if (LumiGaze.isTracking) {
                     LumiGaze.stopCamera();
+                    this._drawFeed(null);
                     startBtn.textContent = 'Start Gaze Camera';
                     startBtn.classList.remove('btn-active');
                 } else {
@@ -655,29 +655,151 @@ const EyeApp = {
     },
 
     // ─────────────────────────────────────────────────────
-    //  CANVAS TRACKER OVERLAY
+    //  LIVE FEED OVERLAY & DIAGNOSTICS (caregiver only; nothing is stored or sent)
     // ─────────────────────────────────────────────────────
-    _canvasCtx: null,
-    _setupCanvas() {
-        const c = document.getElementById('caregiverCanvas');
-        if (c) this._canvasCtx = c.getContext('2d');
+    // The live video is shown mirrored (styles.css: .feed-video scaleX(-1)); the
+    // canvas is not, so camera coordinates are mapped onto it in one place.
+    FEED_MIRRORED: true,
+    _overlayOn: false,
+    _stats: null,
+    _statsOn: false,
+    _statsShownAt: -Infinity,
+    _readoutAt: -Infinity,
+    _earCheck: null,
+
+    /** Called by the engine once per camera frame with what it detected. */
+    _onFrameInfo(info) {
+        if (this._statsOn && this._stats) {
+            this._stats.add(info);
+            if (performance.now() - this._statsShownAt >= 1000) this._showStats();
+        }
+        if (this._earCheck) this._earCheck.add(info, performance.now());
+        this._drawFeed(info);
     },
 
-    _drawCanvasTarget() {
-        if (!this._canvasCtx) return;
-        const ctx = this._canvasCtx, w = ctx.canvas.width, h = ctx.canvas.height;
-        ctx.clearRect(0, 0, w, h);
-        if (!LumiGaze.isTracking) return;
-        // Mirror X since the video element is CSS-mirrored
-        const tx = (1 - LumiGaze.rawRatios.x) * w;
-        const ty = LumiGaze.rawRatios.y * h;
-        ctx.strokeStyle = 'rgba(255,179,0,0.4)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(tx, 0); ctx.lineTo(tx, h);
-        ctx.moveTo(0, ty); ctx.lineTo(w, ty); ctx.stroke();
-        ctx.fillStyle   = 'rgba(255,179,0,0.5)'; ctx.strokeStyle = '#FFB300'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(tx, ty, 7, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = 'white'; ctx.font = '9px Inter';
-        ctx.fillText(`${LumiGaze.rawRatios.x.toFixed(2)}, ${LumiGaze.rawRatios.y.toFixed(2)}`, 6, h - 6);
+    /** Redraw the feed canvas: the raw eye-direction inset, plus the detection overlay if switched on. */
+    _drawFeed(info) {
+        const canvas = document.getElementById('caregiverCanvas');
+        if (!canvas || !canvas.getContext) return;
+        const ctx = canvas.getContext('2d');
+        const r = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, r.width, r.height);
+        if (!info || !LumiGaze.isTracking) { this._showReadout(null); return; }
+        if (!r.width) return;                                    // dashboard not shown
+        const box = { width: r.width, height: r.height };
+        const video = document.getElementById('caregiverVideo');
+        if (this._overlayOn && video && video.videoWidth) {
+            const map = LumiDiagnostics.feedMapping(video.videoWidth, video.videoHeight, r.width, r.height, this.FEED_MIRRORED);
+            LumiDiagnostics.drawOverlay(ctx, info, map, box);
+            this._showReadout(info);
+        }
+        const dir = info.raw ? LumiGaze._fallbackMap([info.raw.x, info.raw.y, info.raw.x, info.raw.y]) : null;
+        LumiDiagnostics.drawDirection(ctx, dir, box);
+    },
+
+    /** The frame in words under the video; at most 10 updates a second. */
+    _showReadout(info) {
+        const out = document.getElementById('diagReadout');
+        if (!out) return;
+        if (!info) { out.textContent = ''; return; }
+        const now = performance.now();
+        if (now - this._readoutAt < 100) return;
+        this._readoutAt = now;
+        out.textContent = LumiDiagnostics.describeFrame(info).join('\n');
+    },
+
+    _bindDiagnostics() {
+        const toggle = document.getElementById('diagOverlayToggle');
+        if (toggle) {
+            try { this._overlayOn = localStorage.getItem('lumiiq_diag_overlay') === '1'; } catch (e) { /* storage unavailable */ }
+            toggle.checked = this._overlayOn;
+            toggle.addEventListener('change', () => {
+                this._overlayOn = toggle.checked;
+                if (!this._overlayOn) this._showReadout(null);
+                try { localStorage.setItem('lumiiq_diag_overlay', this._overlayOn ? '1' : '0'); } catch (e) { /* not remembered */ }
+            });
+        }
+        const statsBtn = document.getElementById('diagStatsBtn');
+        if (statsBtn) statsBtn.addEventListener('click', () => {
+            this._statsOn = !this._statsOn;
+            if (this._statsOn && !this._stats) {
+                const d = LumiStore.DEFAULT_SETTINGS;
+                this._stats = new LumiDiagnostics.FrameStats(d && d.earThreshold != null ? d.earThreshold : 0.18);
+            }
+            statsBtn.textContent = this._statsOn ? 'Stop frame statistics' : 'Start frame statistics';
+            statsBtn.classList.toggle('btn-active', this._statsOn);
+            this._showStats();
+        });
+        document.getElementById('diagStatsReset')?.addEventListener('click', () => {
+            if (this._stats) this._stats.reset();
+            this._showStats();
+        });
+        document.getElementById('earCheckBtn')?.addEventListener('click', () => this._startEarCheck());
+        document.getElementById('earCheckCancel')?.addEventListener('click', () => this._endEarCheck(true));
+    },
+
+    _showStats() {
+        this._statsShownAt = performance.now();
+        const out = document.getElementById('diagStatsOut');
+        if (!out) return;
+        if (!this._stats) { out.textContent = 'Not collecting.'; return; }
+        out.textContent = this._stats.describe().join('\n') + (this._statsOn ? '' : '\n(paused)');
+    },
+
+    /** Guided check of how the EAR threshold classifies this person's open and closed eyes. */
+    _startEarCheck() {
+        if (this._earCheck) return;
+        if (!LumiGaze.isTracking) {
+            this._showNotice('Start the gaze camera first: the eyes open / closed check needs the live camera.', 'warning');
+            return;
+        }
+        this._ensureAudioUnlocked();
+        const check = new LumiDiagnostics.EarCheck();
+        check.start(performance.now());
+        this._earCheck = check;
+        this._earPhase = null;
+        document.getElementById('earCheckOverlay')?.classList.remove('hidden');
+        const out = document.getElementById('earCheckOut');
+        if (out) out.textContent = '';
+        const tick = () => {
+            if (this._earCheck !== check) return;          // cancelled
+            const ph = check.phase(performance.now());
+            if (!ph) { this._endEarCheck(false); return; }
+            if (ph.name !== this._earPhase) { this._earPhase = ph.name; this._showEarPhase(ph); }
+            this._earTimer = requestAnimationFrame(tick);
+        };
+        tick();
+    },
+
+    _showEarPhase(ph) {
+        const dot = document.getElementById('earCheckDot');
+        if (dot) {
+            dot.classList.toggle('hidden', !ph.dot);
+            if (ph.dot) { dot.style.left = `${ph.dot.x * 100}%`; dot.style.top = `${ph.dot.y * 100}%`; }
+        }
+        const text = document.getElementById('earCheckText');
+        if (text) text.textContent = ph.open
+            ? `Keep your eyes open and look at the dot (${ph.label.toLowerCase()}).`
+            : 'Close your eyes now. Open them at the next chime.';
+        if (!ph.open) this._chime();                        // "close your eyes"
+    },
+
+    _endEarCheck(cancelled) {
+        const check = this._earCheck;
+        if (!check) return;
+        this._earCheck = null;
+        cancelAnimationFrame(this._earTimer);
+        document.getElementById('earCheckOverlay')?.classList.add('hidden');
+        const out = document.getElementById('earCheckOut');
+        if (cancelled) { if (out) out.textContent = 'Check cancelled.'; return; }
+        this._chime();                                      // "open your eyes"
+        const threshold = LumiStore.getSettings().earThreshold;
+        if (out) out.textContent = 'Measured just now (live):\n' +
+            LumiDiagnostics.EarCheck.describe(check.result(threshold), threshold).join('\n');
     }
 };
 

@@ -79,6 +79,8 @@
                             <canvas id="caregiverCanvas" class="feed-canvas" width="640" height="480"></canvas>
                         </div>
                         <button class="dash-btn" id="startCameraBtn">Start Gaze Camera</button>
+                        <label class="diag-toggle"><input type="checkbox" id="diagOverlayToggle"> Show detection overlay (eye points, EAR, head pose)</label>
+                        <pre class="diag-out" id="diagReadout"></pre>
                     </div>
                     <div class="dash-card">
                         <h3>Sleep Mode</h3>
@@ -90,6 +92,18 @@
                         <p class="muted-text">Run a 5- to 25-point calibration to map eye movements to screen positions.</p>
                         <button class="dash-btn" id="startCalibrationBtn">Calibrate Gaze Engine</button>
                         <div class="calib-status" id="calibStatusText">Status: Standby</div>
+                    </div>
+                    <div class="dash-card">
+                        <h3>Diagnostics</h3>
+                        <p class="muted-text">For finding tracking problems. The figures stay on this screen and are never saved or sent.</p>
+                        <div class="diag-row">
+                            <button class="dash-btn" id="diagStatsBtn">Start frame statistics</button>
+                            <button class="dash-btn ghost" id="diagStatsReset">Reset</button>
+                        </div>
+                        <pre class="diag-out" id="diagStatsOut">Not collecting.</pre>
+                        <button class="dash-btn" id="earCheckBtn">Eyes open / closed check (8 s)</button>
+                        <p class="muted-text">The patient looks at a dot at the top, then at the bottom, then closes their eyes at the chime and opens them at the next chime.</p>
+                        <pre class="diag-out" id="earCheckOut"></pre>
                     </div>
                 </div>
 
@@ -282,6 +296,14 @@
     </div>
 </div>
 
+<!-- ── EYES OPEN / CLOSED CHECK (diagnostics) ─────────────── -->
+<div class="cal-overlay hidden" id="earCheckOverlay">
+    <div class="ear-dot hidden" id="earCheckDot"></div>
+    <div class="ear-box">
+        <p class="cal-label" id="earCheckText"></p>
+        <button class="dash-btn ghost" id="earCheckCancel">Cancel</button>
+    </div>
+</div>
 <!-- ── EMERGENCY OVERLAY ────────────────────────────────── -->
 <div class="alarm-overlay hidden" id="emergencyOverlay">
     <div class="alarm-card">

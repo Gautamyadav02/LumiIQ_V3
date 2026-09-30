@@ -7,8 +7,9 @@
  *
  *   • feedMapping   — camera coordinates → pixels on the displayed feed
  *                     (object-fit: cover crop + mirror), in one place
- *   • drawOverlay   — iris centres, EAR points, EAR per eye, confidence,
- *                     head pose and whether the frame produced a gaze point
+ *   • drawOverlay   — iris centres, EAR points and EAR per eye, on the video
+ *   • describeFrame — the same frame in words (EAR, threshold, confidence,
+ *                     head pose, whether it produced a gaze point and why not)
  *   • drawDirection — small inset showing the raw (uncalibrated) eye direction
  *   • FrameStats    — % frames with a face / with a gaze point, reasons,
  *                     confidence and EAR distributions
@@ -60,28 +61,17 @@
     ctx.fill();
   }
 
-  function panel(ctx, lines, x, y) {
-    const lh = 14;
-    ctx.fillStyle = COLOURS.panel;
-    ctx.fillRect(x - 4, y - 11, 250, lines.length * lh + 6);
-    ctx.fillStyle = COLOURS.text;
-    ctx.font = '11px monospace';
-    lines.forEach((line, i) => ctx.fillText(line, x, y + i * lh));
-  }
-
   const f2 = (v) => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(2));
   const deg = (v) => `${Math.round(v)}°`;
 
   /**
-   * The detection overlay for one frame. `map` comes from feedMapping; `box` is
-   * the displayed size in CSS pixels. Eyes are labelled R/L by the patient's side.
+   * The detection overlay for one frame: landmark points and a short EAR label
+   * per eye, nothing else, so the video (and the eyes) stay visible even on a
+   * small feed. The words go under the video (describeFrame). `map` comes from
+   * feedMapping. Eyes are labelled R/L by the patient's side.
    */
   function drawOverlay(ctx, info, map, box) {
-    if (!info) return;
-    if (!info.face) {
-      panel(ctx, ['No face detected', `gaze point: ${REASON_TEXT.no_face}`], 10, 20);
-      return;
-    }
+    if (!info || !info.face) return;
     for (const e of info.eyes) {
       const colour = e.used ? COLOURS.used : COLOURS.unused;
       for (const p of [...e.corners, ...e.lids]) dot(ctx, map(p.x, p.y), 2.5, colour);
@@ -101,16 +91,21 @@
       ctx.fillStyle = e.open ? COLOURS.open : COLOURS.closed;
       ctx.fillText(`${e.side === 'right' ? 'R' : 'L'} ${f2(e.ear)}`, lower.x - 18, lower.y + 16);
     }
+  }
+
+  /** The frame in words, for the readout under the video. */
+  function describeFrame(info) {
+    if (!info) return [];
+    if (!info.face) return ['No face detected', `gaze point: ${REASON_TEXT.no_face}`];
     const [r, l] = [info.eyes.find((e) => e.side === 'right'), info.eyes.find((e) => e.side === 'left')];
-    const state = (e) => (e ? `${f2(e.ear)} ${e.open ? 'open' : 'closed'}${e.used ? '' : ' (unused)'}` : '—');
+    const state = (e) => (e ? `${f2(e.ear)} ${e.open ? 'open' : 'closed'}${e.used ? '' : ' (not used)'}` : '—');
     const pose = info.pose || { yaw: 0, pitch: 0, roll: 0 };
-    panel(ctx, [
-      `EAR R ${state(r)}`,
-      `EAR L ${state(l)}`,
+    return [
+      `EAR R ${state(r)}   EAR L ${state(l)}`,
       `threshold ${f2(info.earThreshold)}   confidence ${f2(info.confidence)}`,
       `yaw ${deg(pose.yaw)}  pitch ${deg(pose.pitch)}  roll ${deg(pose.roll)}`,
       `gaze point: ${REASON_TEXT[info.reason] || info.reason}`,
-    ], 10, 20);
+    ];
   }
 
   /**
@@ -315,7 +310,7 @@
     }
   }
 
-  root.LumiDiagnostics = { feedMapping, drawOverlay, drawDirection, FrameStats, EarCheck, EAR_CHECK_PHASES,
-                           REASON_TEXT, percentile };
+  root.LumiDiagnostics = { feedMapping, drawOverlay, describeFrame, drawDirection, FrameStats, EarCheck,
+                           EAR_CHECK_PHASES, REASON_TEXT, percentile };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.LumiDiagnostics;
 })(typeof window !== 'undefined' ? window : globalThis);

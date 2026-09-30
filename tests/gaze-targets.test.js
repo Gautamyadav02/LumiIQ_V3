@@ -40,7 +40,8 @@ test('caregiver-only controls in index.html are not gaze targets', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   for (const id of ['alarmDismissBtn', 'startCameraBtn', 'startCalibrationBtn', 'tabDashboard',
                     'acceptCalibBtn', 'recalibBtn', 'exitCalibBtn', 'startCalibProgressBtn', 'sleepModeBtn',
-                    'resetSettingsBtn']) {
+                    'resetSettingsBtn', 'diagOverlayToggle', 'diagStatsBtn', 'diagStatsReset', 'earCheckBtn',
+                    'earCheckCancel']) {
     const tag = html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`));
     assert.ok(tag, `${id} should exist in index.html`);
     assert.doesNotMatch(tag[0], /\bgazeable\b/, `${id} must not be .gazeable`);

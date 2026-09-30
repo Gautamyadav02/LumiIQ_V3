@@ -81,19 +81,29 @@ test('overlay: each iris centre is drawn exactly where the mapping puts it', () 
     const p = map(e.iris.x, e.iris.y);
     assert.ok(arcs.some((a) => near(a[1], p.x) && near(a[2], p.y)), `${e.side} iris drawn at its mapped position`);
   }
-  const text = ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]).join('\n');
-  assert.match(text, /EAR/);
-  assert.match(text, /0\.25/);
-  assert.match(text, /yaw/i);
-  assert.match(text, /gaze/i);
+  // Only short EAR labels go on the video; a text panel would cover the eyes on a small feed.
+  const labels = ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]);
+  assert.deepEqual(labels, ['R 0.25', 'L 0.25']);
+  assert.equal(ctx.calls.filter((c) => c[0] === 'fillRect').length, 0, 'no text panel over the video');
 });
 
-test('overlay: a frame without a face says so and draws no eye points', () => {
+test('readout: the frame described in words, for the text box under the video', () => {
+  const { D } = load();
+  const text = D.describeFrame(frame()).join('\n');
+  assert.match(text, /EAR R 0\.25 open/);
+  assert.match(text, /threshold 0\.18/);
+  assert.match(text, /confidence 0\.90/);
+  assert.match(text, /yaw 2°\s+pitch -3°\s+roll 1°/);
+  assert.match(text, /gaze point: yes/);
+  assert.match(D.describeFrame(frame({ reason: 'eyes_closed', ear: 0.1 })).join('\n'), /gaze point: no \(no usable eye/);
+});
+
+test('overlay: a frame without a face draws nothing, and the readout says so', () => {
   const { D } = load();
   const ctx = recordingContext();
   D.drawOverlay(ctx, frame({ reason: 'no_face' }), D.feedMapping(1280, 720, 400, 300, true), { width: 400, height: 300 });
   assert.equal(ctx.calls.filter((c) => c[0] === 'arc').length, 0);
-  assert.match(ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]).join('\n'), /no face/i);
+  assert.match(D.describeFrame(frame({ reason: 'no_face' })).join('\n'), /no face/i);
 });
 
 test('direction inset: the dot sits left of centre when the eyes look to the screen\'s left', () => {

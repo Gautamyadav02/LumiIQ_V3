@@ -95,6 +95,18 @@ const LumiGaze = {
     onSleepModeChange: null,     // (isOn) sleep mode switched, e.g. ended after 12 h
     onCalibrationCollect: null,  // (sampleCount)
     onCalibrationComplete: null, // (report)
+    onFrameInfo: null,           // (info) per-frame detection record for the caregiver's diagnostics
+
+    // Last per-frame record (see _frameInfo). Passive: nothing in the pipeline reads it.
+    lastFrameInfo: null,
+
+    // The landmarks of each eye, in MediaPipe's naming, which is the patient's own
+    // side for an unmirrored camera image. The engine's "L" features (lx, earL,
+    // activeEye 'left') come from the first entry unless swapEyes is on.
+    EYE_LANDMARKS: [
+        { side: 'right', iris: 468, corners: [33, 133], lids: [159, 145] },
+        { side: 'left',  iris: 473, corners: [362, 263], lids: [386, 374] },
+    ],
 
     // ─────────────────────────────────────────────────────
     //  INIT — load MediaPipe + construct V3 subsystems
@@ -366,6 +378,43 @@ const LumiGaze = {
         if (this.dwell) this.dwell.noGaze(now);
         this._checkFaceLost(now);
         if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
+        const settings = this._cachedSettings || LumiStore.getSettings();
+        this._reportFrame({ t: now, face: false, eyes: [], pose: null, confidence: 0, eyeMode: 'none',
+                            earThreshold: settings.earThreshold }, 'no_face');
+    },
+
+    /**
+     * What this frame detected, for the caregiver's diagnostics overlay and
+     * statistics: each eye's landmarks (normalised video coordinates), its EAR
+     * and open/used state, head pose and confidence. Passive: changes nothing.
+     */
+    _frameInfo(lm, matrix, fx, settings) {
+        const P = (i) => ({ x: lm[i].x, y: lm[i].y });
+        const engineLeft = settings.swapEyes ? 1 : 0;   // the physical eye the engine calls "L"
+        const usedL = fx.eyeMode === 'both' || fx.eyeMode === 'left';
+        const usedR = fx.eyeMode === 'both' || fx.eyeMode === 'right';
+        const eyes = this.EYE_LANDMARKS.map((e, i) => {
+            const ear = this._dist(lm[e.lids[0]], lm[e.lids[1]]) / (this._dist(lm[e.corners[0]], lm[e.corners[1]]) + 1e-6);
+            return {
+                side: e.side, iris: P(e.iris), corners: e.corners.map(P), lids: e.lids.map(P),
+                ear, open: ear > settings.earThreshold, used: i === engineLeft ? usedL : usedR,
+            };
+        });
+        const [yaw, pitch, roll] = this._headPose(matrix);
+        return {
+            t: performance.now(), face: true, eyes, pose: { yaw, pitch, roll },
+            confidence: this.lastConfidence, eyeMode: fx.eyeMode, earThreshold: settings.earThreshold,
+        };
+    },
+
+    /** Finish a frame record: why it did or did not produce a gaze point (reason), and the point. */
+    _reportFrame(info, reason, gaze = null) {
+        info.reason = reason;
+        info.gaze = gaze ? { x: gaze.x, y: gaze.y } : null;
+        this.lastFrameInfo = info;
+        // Diagnostics must never disturb monitoring: a failure here is only logged.
+        try { if (this.onFrameInfo) this.onFrameInfo(info); }
+        catch (err) { console.error('Diagnostics error:', err); }
     },
 
     /** One FACE_NOT_DETECTED alarm when no face has been seen for faceLostAlarmSec while tracking. */
@@ -493,6 +542,7 @@ const LumiGaze = {
         } else {
             this.lastConfidence = 0;
         }
+        const info = this._frameInfo(lm, matrix, fx, settings);
 
         // ── Blink / emergency detection (also during calibration) ──
         this._updateBlinkState(fx, settings);
@@ -505,12 +555,14 @@ const LumiGaze = {
                 if (this.onCalibrationCollect) this.onCalibrationCollect(this._calibRun.sampleCount());
             }
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, fx.eyeMode, 'calibrating', this.lastConfidence);
+            this._reportFrame(info, 'calibrating');
             return;
         }
 
         if (fx.eyeMode === 'none' || !fx.features) {
             this.dwell.noGaze(performance.now());
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Eyes closed', this.lastConfidence);
+            this._reportFrame(info, 'eyes_closed');
             return;
         }
         this.rawRatios = fx.rawRatios;
@@ -518,6 +570,7 @@ const LumiGaze = {
         if (this.lastConfidence < 0.2) {
             this.dwell.noGaze(performance.now());
             if (this.onGazeUpdate) this.onGazeUpdate(null, null, fx.eyeMode, 'low_confidence', this.lastConfidence);
+            this._reportFrame(info, 'low_confidence');
             return;
         }
 
@@ -541,6 +594,7 @@ const LumiGaze = {
         // click would press random targets (AUDIT M5). Gaze clicks wait for a calibration.
         if (!this.isCalibrated) {
             this.dwell.cancel();
+            this._reportFrame(info, 'uncalibrated', pt);
             return;
         }
 
@@ -557,6 +611,7 @@ const LumiGaze = {
         });
         this.dwell.setDwellTime(dynamicDwell);
         this.dwell.update(pt.x, pt.y, now);
+        this._reportFrame(info, 'ok', pt);
     },
 
     /** 'both' (dwell or blink, default), 'dwell' or 'blink'. */

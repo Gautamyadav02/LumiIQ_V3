@@ -113,7 +113,11 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
    chime and a Safety Alerts entry. Ends automatically after 12 hours.
 6. **Caregiver Dashboard** — live camera feed, calibration, sleep mode, patient timeline,
    safety alerts, and tuning (dwell time, selection method, smoothing, active eye, EAR
-   threshold, voice).
+   threshold, voice), with a reset to defaults.
+7. **Diagnostics (caregiver only)** — a detection overlay on the live feed (iris centres,
+   EAR per eye, head pose, why a frame gave no gaze point), frame statistics, and a guided
+   eyes open/closed check for the EAR threshold. Nothing is saved or sent. See
+   [docs/diagnosis/phase-a.md](docs/diagnosis/phase-a.md).
 
 ---
 
@@ -132,6 +136,7 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
 | `body-map.js`   | Body map & symptoms (`LumiBodyMap`) |
 | `dictionary.js` | Prediction + spelling suggestions (`LumiDictionary`) |
 | `database.js`   | API client, cache and offline write queue (`LumiStore`) |
+| `diagnostics.js` | Caregiver diagnostics: feed overlay, frame statistics, EAR check (`LumiDiagnostics`) |
 
 ## ✅ Tests
 

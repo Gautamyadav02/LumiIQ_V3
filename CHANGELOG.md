@@ -3,6 +3,65 @@
 Changes to LumiIQ, the browser app at the root of this folder. The IDs (C1, H4, …) refer to the
 findings in [AUDIT.md](AUDIT.md). The original app is preserved as git tag **`LumiIQ_V1`**.
 
+## Unreleased — Phase A: diagnosis tools (branch `phase-a-diagnosis`)
+
+These are diagnostic tools only: gaze, dwell, blink and alarm behaviour are unchanged, and all
+existing tests pass unchanged. The written diagnosis is in
+[docs/diagnosis/phase-a.md](docs/diagnosis/phase-a.md); the design decisions are in
+[ADR 0001](docs/adr/0001-caregiver-diagnostics.md).
+
+### Added
+
+- **Detection overlay on the live feed** (Caregiver tab, "Show detection overlay", off by
+  default).
+  - **On the video:** iris centres, the eyelid and corner points used for EAR, and EAR per eye.
+  - **In a box under the video:** confidence, head pose, and whether the frame produced a gaze
+    point, and why not.
+  - **Alignment:** checked in Chrome with a fake camera; markers land within about 1 px of the
+    video content they describe (synthetic video).
+- **Diagnostics card:**
+  - **Frame statistics:** % frames with a face and with a gaze point, the reasons for missing
+    ones, confidence and EAR distributions, and how many "open" samples the default EAR
+    threshold would call closed.
+  - **Eyes open / closed check** (8 s, guided by a dot and chimes): says how the current EAR
+    threshold classifies this person's open eyes, looking up and down, and closed eyes.
+  - Figures stay on this screen and are never saved or sent.
+- **Reset settings to defaults** (Platform Settings), with a confirmation. The calibration, the
+  logs and sleep mode are kept.
+- **Engine: a passive per-frame record** (`LumiGaze.onFrameInfo` / `lastFrameInfo`) of what
+  was detected. Nothing in the pipeline reads it.
+- **`eval/synthetic/ear-threshold.js`:** a synthetic analysis of what the EAR threshold
+  changes, run on the real modules.
+
+### Fixed
+
+- **The amber crosshair on the live feed.**
+  - **The problems:** it plotted the iris-in-eye ratio across the whole video, so it never sat
+    on an eye; it moved the opposite way to the eyes, because the canvas was CSS-mirrored and
+    the code flipped it again; and its text was drawn backwards.
+  - **Now:** a small "eye direction" inset that moves with the eyes. The canvas is no longer
+    mirrored; camera coordinates are mapped onto the mirrored, cropped video in one place.
+- **Defaults could be overwritten.** Changing a setting before the store had loaded could
+  alter the built-in defaults.
+
+### Found, not changed yet (need the Phase B baseline or a decision)
+
+- **EAR threshold 0.11** (the saved value on the development machine) counts eyes at EAR
+  0.12–0.16 as open. Such frames give gaze points and calibration samples, and they never
+  raise the eyes-closed alarm (synthetic). The right value is this person's; the eyes
+  open/closed check measures it.
+- **Calibration's outlier filter** keeps a frame that is off in exactly 3 of the 10 features,
+  which is what an eyelid-disturbed frame looks like (synthetic: 6/6 kept).
+- **"Left Eye Only" appears to track the patient's right eye**, following MediaPipe's
+  landmark naming, unless "Swap" is on. Confirm with the wink check (D3) before changing it.
+
+Tests:
+- `tests/diagnostics.test.js` (10)
+- `tests/diagnostics-module.test.js` (11)
+- `tests/diagnostics-app.test.js` (8)
+- additions to `store.test.js`, `app.test.js`, `gaze-targets.test.js` and
+  `scripts-load.test.js`
+
 ## Unreleased — fixes from the Phase 0 audit (branch `fix/phase0-findings`)
 
 Every fix has a regression test, written first and seen to fail on the old code. `npm test` runs:

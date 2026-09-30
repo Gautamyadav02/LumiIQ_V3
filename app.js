@@ -46,6 +46,7 @@ const EyeApp = {
         document.getElementById('noticeClose')?.addEventListener('click', () => this._showNotice(null));
         this._bindCameraButtons();
         this._bindSleepMode();
+        this._bindResetSettings();
         this.updatePill('Disconnected', '');
 
         // Wire up gaze engine callbacks
@@ -608,6 +609,18 @@ const EyeApp = {
                 const valEl = document.getElementById(`${e.target.id}_val`);
                 if (valEl) valEl.textContent = val;
             });
+        });
+    },
+
+    /** "Reset settings to defaults" (caregiver only). Calibration and logs are not touched. */
+    _bindResetSettings() {
+        const btn = document.getElementById('resetSettingsBtn');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            if (!window.confirm('Reset all settings to their defaults? The calibration and the logs are kept.')) return;
+            LumiStore.resetSettings();
+            this._loadSettingsValues();
+            this._showNotice('Settings reset to their defaults. The calibration and the logs are unchanged.', 'info');
         });
     },
 

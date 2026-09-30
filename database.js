@@ -98,7 +98,10 @@ const LumiStore = {
     //  SETTINGS (synchronous reads)
     // ─────────────────────────────────────────────────────
     getSettings() {
-        return this._cache.settings || this.DEFAULT_SETTINGS;
+        // A copy when nothing is loaded yet, so that changing a setting can never
+        // alter DEFAULT_SETTINGS (which "Reset settings to defaults" relies on).
+        if (!this._cache.settings) this._cache.settings = { ...this.DEFAULT_SETTINGS };
+        return this._cache.settings;
     },
 
     updateSetting(key, value) {
@@ -110,6 +113,18 @@ const LumiStore = {
         // Debounce server writes while a slider is being dragged.
         clearTimeout(this._settingsTimer);
         this._settingsTimer = setTimeout(() => this._write('PUT', '/api/settings', { ...s }), 250);
+    },
+
+    /** Put every preference back to its default. Sleep mode is state, not a preference, so it is kept. */
+    resetSettings() {
+        const sleepModeUntil = this.getSettings().sleepModeUntil || 0;
+        const s = { ...this.DEFAULT_SETTINGS, sleepModeUntil };
+        this._cache.settings = s;
+        this._lsSet(this.LS.SETTINGS, s);
+        window.dispatchEvent(new Event('lumiiq-settings-changed'));
+        clearTimeout(this._settingsTimer);
+        this._write('PUT', '/api/settings', { ...s });
+        return s;
     },
 
     // ─────────────────────────────────────────────────────

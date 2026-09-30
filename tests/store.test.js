@@ -101,3 +101,42 @@ test('entries still waiting for the server are shown in the caregiver timeline',
   await s.store.refreshLogs();
   assert.deepEqual(s.store.getTypedLogs().map((l) => l.text), ['waiting']);
 });
+
+// ── Phase A2: reset settings to defaults ────────────────────────────
+test('resetSettings restores every default and saves them to the server', async () => {
+  const { env, store, sent, online } = load();
+  online();
+  await store.init();
+  store.updateSetting('dwellTimeMs', 600);
+  store.updateSetting('smoothingFactor', 0.06);
+  store.updateSetting('earThreshold', 0.11);
+  let changed = 0;
+  env.window.addEventListener('lumiiq-settings-changed', () => changed++);
+  store.resetSettings();
+  await store.flushPending();
+  const s = store.getSettings();
+  assert.equal(s.dwellTimeMs, 1200);
+  assert.equal(s.smoothingFactor, 0.35);
+  assert.equal(s.earThreshold, 0.18);
+  assert.ok(changed >= 1, 'listeners (the gaze engine) are told');
+  const put = sent.filter((w) => w.method === 'PUT' && w.url === '/api/settings').pop();
+  assert.equal(put.body.dwellTimeMs, 1200);
+  assert.equal(put.body.earThreshold, 0.18);
+});
+
+test('resetSettings keeps sleep mode as it is (it is state, not a preference)', async () => {
+  const { store } = load();
+  await store.init();
+  const until = Date.now() + 3600e3;
+  store.updateSetting('sleepModeUntil', until);
+  store.resetSettings();
+  assert.equal(store.getSettings().sleepModeUntil, until);
+});
+
+test('changing a setting never alters the built-in defaults', () => {
+  const { store } = load();            // before init(): no settings loaded yet
+  store.updateSetting('dwellTimeMs', 600);
+  assert.equal(store.DEFAULT_SETTINGS.dwellTimeMs, 1200);
+  store.resetSettings();
+  assert.equal(store.getSettings().dwellTimeMs, 1200);
+});

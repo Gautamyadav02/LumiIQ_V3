@@ -106,3 +106,23 @@ test('sleep mode: the button and header badge show the state; activity shows a n
   app._updateSleepUi();
   assert.equal(badge.classList.contains('hidden'), true, 'badge hidden when off');
 });
+
+// ── Phase A2: reset settings to defaults ────────────────────────────
+test('Reset settings: asks first, then restores the defaults and shows them', () => {
+  const { env, app } = setupApp();
+  let resets = 0;
+  env.window.LumiStore.resetSettings = () => { resets++; };
+  const btn = env.element({ id: 'resetSettingsBtn', tag: 'button' });
+  env.element({ id: 'noticeBanner' });
+  env.element({ id: 'noticeText' });
+  let asked = 0;
+  env.window.confirm = () => { asked++; return false; };
+  app._bindResetSettings();
+  btn.click();
+  assert.equal(resets, 0, 'nothing changes when the caregiver cancels');
+  env.window.confirm = () => { asked++; return true; };
+  btn.click();
+  assert.equal(asked, 2);
+  assert.equal(resets, 1);
+  assert.match(env.document.getElementById('noticeText').textContent, /defaults/i);
+});

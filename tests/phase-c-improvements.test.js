@@ -256,3 +256,135 @@ test('C7: switched off, the detector is the Phase B one', () => {
   const point = { x: 670, y: 400 };
   for (let i = 0; i < 15; i++) assert.equal(a.onDwellActivate(point, KEY, KEY_SIZE), b.onDwellActivate(point, KEY, KEY_SIZE));
 });
+
+// ── C2: eye-opening floor for gaze ──────────────────────────────────
+const { faceLandmarks, FACING_CAMERA } = require('./helpers/landmarks');
+
+const ALARM_AT_0_10 = { earThreshold: 0.10, activeEye: 'both', swapEyes: false };
+
+test('C2: a half-closed eye (EAR 0.13) gives no gaze, even with the alarm threshold at 0.10', () => {
+  const lm = faceLandmarks({ openL: 0.13, openR: 0.13 });
+  const before = F.extract(lm, FACING_CAMERA, ALARM_AT_0_10);
+  assert.ok(before.features, 'Phase B: the frame is used for gaze and calibration');
+  const after = F.extract(lm, FACING_CAMERA, ALARM_AT_0_10, F.improvementOptions(F.flags(['C2'])).features);
+  assert.equal(after.features, undefined);
+  assert.equal(after.eyeMode, 'none');
+  assert.equal(after.narrow, true, 'open by the alarm threshold, too narrow for gaze');
+  assert.equal(after.lOpen && after.rOpen, true, 'blink and eyes-closed alarms still use the caregiver\'s threshold');
+});
+
+test('C2: frames near the floor lose confidence gradually, not all at once', () => {
+  const opts = F.improvementOptions(F.flags(['C2'])).features;
+  const f = (ear) => [0.5, 0.5, 0.5, 0.5, 0, 0, 0, ear, 0.12, 0.1];
+  const c = (ear) => F.confidence(f(ear), opts);
+  assert.ok(c(0.17) < c(0.19) && c(0.19) < c(0.21), 'rising with the eye opening');
+  assert.ok(c(0.17) >= 0.5 && c(0.17) < 0.7);
+  assert.equal(c(0.24), 1);
+  assert.equal(c(0.5), 0.5, 'an implausibly wide eye is still penalised');
+  // Phase B: one cliff at 0.12.
+  assert.deepEqual([F.confidence(f(0.119)), F.confidence(f(0.121))], [0.5, 1]);
+});
+
+test('C2: switched off, the Phase B features are unchanged', () => {
+  const lm = faceLandmarks({ irisX: 0.62, irisY: 0.4, openL: 0.27, openR: 0.3 });
+  assert.deepEqual(F.extract(lm, FACING_CAMERA, ALARM_AT_0_10, F.improvementOptions(F.flags('none')).features),
+                   F.extract(lm, FACING_CAMERA, ALARM_AT_0_10));
+});
+
+// ── C1: head-pose compensation ──────────────────────────────────────
+const { makeHead } = require('./helpers/head3d');
+
+const SETTINGS = { earThreshold: 0.18, activeEye: 'both', swapEyes: false };
+const C1 = F.improvementOptions(F.flags(['C1']));
+const OFF = F.improvementOptions(F.flags('none'));
+const VALIDATION = [0.2, 0.4, 0.6, 0.8].flatMap((x) => [0.25, 0.5, 0.75].map((y) => ({ x, y })));
+
+/**
+ * Calibrate on the synthetic head with the head still (as the wizard asks), then
+ * measure the mean error on 12 new targets with the head in a given pose.
+ */
+function headTrial(options, { yaw = 0, pitch = 0, roll = 0, seed = 1 } = {}) {
+  const head = makeHead();
+  const rand = rng(seed);
+  const feats = (target, pose) => {
+    const { lm, matrix } = head.frame({ target, ...pose, noise: 0.0002, rand });
+    return F.extract(lm, matrix, SETTINGS, { ...options.features, aspect: head.aspect }).features;
+  };
+  const still = () => ({ yaw: rand() * 0.4, pitch: rand() * 0.4, roll: rand() * 0.3 });   // a head never quite still
+  const cal = new GazeCalibration(options.calibration);
+  let t = cal.begin(9, 0);
+  while (t) {
+    for (let i = 0; i < 20; i++) cal.addSample(feats(t, still()), 1000);
+    t = cal.commitPoint(2000).next;
+  }
+  assert.equal(cal.train({ width: 1440, height: 900 }).ok, true);
+  let sum = 0;
+  for (const target of VALIDATION) {
+    const p = cal.predict(feats(target, { yaw, pitch, roll }));
+    sum += Math.hypot((p.x - target.x) * 1440, (p.y - target.y) * 900);
+  }
+  return sum / VALIDATION.length;
+}
+
+test('C1: after a 5° head turn the error is far smaller with compensation (synthetic head)', () => {
+  // The synthetic eyes are 0.34 eye-widths deep; the compensation assumes 0.4,
+  // so the test does not pass merely because both sides use the same constant.
+  const off = headTrial(OFF, { yaw: 5 }), on = headTrial(C1, { yaw: 5 });
+  assert.ok(on < off * 0.5, `head turned 5°: ${on.toFixed(0)} px with C1, ${off.toFixed(0)} px without`);
+  const offTilt = headTrial(OFF, { pitch: 5 }), onTilt = headTrial(C1, { pitch: 5 });
+  assert.ok(onTilt < offTilt * 0.5, `head tilted 5°: ${onTilt.toFixed(0)} px with C1, ${offTilt.toFixed(0)} px without`);
+});
+
+test('C1: with the head still it costs little accuracy', () => {
+  const off = headTrial(OFF), on = headTrial(C1);
+  assert.ok(on < off + 15, `head still: ${on.toFixed(1)} px with C1, ${off.toFixed(1)} px without`);
+});
+
+test('C1: tilting the head sideways (roll) does not move the head-frame features', () => {
+  const head = makeHead();
+  const target = { x: 0.3, y: 0.6 };
+  const at = (roll, opts) => {
+    const { lm, matrix } = head.frame({ target, roll });
+    return F.extract(lm, matrix, SETTINGS, { ...opts.features, aspect: head.aspect }).features.slice(0, 4);
+  };
+  const level = at(0, C1), rolled = at(10, C1);
+  rolled.forEach((v, i) => assert.ok(Math.abs(v - level[i]) < 1e-9, `feature ${i}: ${v} vs ${level[i]}`));
+  const levelOff = at(0, OFF), rolledOff = at(10, OFF);
+  assert.ok(rolledOff.some((v, i) => Math.abs(v - levelOff[i]) > 0.01), 'the Phase B (image) features do move');
+});
+
+test('C1: head angles are folded into the eye features, so the separate angle features are zero', () => {
+  const head = makeHead();
+  const { lm, matrix } = head.frame({ target: { x: 0.5, y: 0.5 }, yaw: 4, pitch: -3, roll: 2 });
+  const fx = F.extract(lm, matrix, SETTINGS, { ...C1.features, aspect: head.aspect });
+  assert.deepEqual(fx.features.slice(4, 7), [0, 0, 0]);
+  assert.ok(Math.abs(fx.pose[0] - 4) < 1e-6 && Math.abs(fx.pose[1] + 3) < 1e-6, 'the pose is still reported');
+  // Confidence still sees an extreme head pose.
+  const turned = makeHead().frame({ target: { x: 0.5, y: 0.5 }, yaw: 40 });
+  const fxTurned = F.extract(turned.lm, turned.matrix, SETTINGS, { ...C1.features, aspect: head.aspect });
+  assert.ok(F.confidence(fxTurned.features, C1.features, fxTurned.pose) < 1);
+});
+
+test('C1: without a head matrix or depth it falls back to the Phase B features', () => {
+  const lm = faceLandmarks({ irisX: 0.6, irisY: 0.45 });
+  const flat = lm.map((p) => ({ x: p.x, y: p.y }));                  // no z
+  assert.deepEqual(F.extract(lm, null, SETTINGS, C1.features), F.extract(lm, null, SETTINGS));
+  assert.deepEqual(F.extract(flat, FACING_CAMERA, SETTINGS, C1.features), F.extract(flat, FACING_CAMERA, SETTINGS));
+});
+
+test('C1: a calibration trained on head-frame features is saved as version 4, and says so', () => {
+  const cal = new GazeCalibration({ ...C1.calibration });
+  let t = cal.begin(5, 0);
+  const rand = rng(9);
+  while (t) {
+    for (let i = 0; i < 15; i++) cal.addSample([0.5 - 0.3 * (t.x - 0.5) + rand() * 0.003, 0.5 + 0.3 * (t.y - 0.5) + rand() * 0.003, 0.5, 0.5, 0, 0, 0, 0.28, 0.2, 0.15], 1000);
+    t = cal.commitPoint(2000).next;
+  }
+  cal.train({ width: 1440, height: 900 });
+  const saved = cal.toJSON();
+  assert.equal(saved.version, 4);
+  assert.equal(saved.featureSet, 'head');
+  assert.equal(GazeCalibration.fromJSON(saved).featureSet, 'head');
+  const phaseB = new GazeCalibration();
+  assert.equal(phaseB.featureSet, 'image');
+});

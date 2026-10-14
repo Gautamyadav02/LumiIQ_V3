@@ -129,3 +129,57 @@ npm run eval:report -- --synthetic
 This simulates three sessions with a software "person" and writes `eval/SYNTHETIC-CHECK.md`.
 Every number in that file is labelled synthetic. It shows what the report will look like; it
 is not a result, and it is excluded from git.
+
+## Checking C1's sign and gain live
+
+Only on the `phase-c-gaze` code (C1 is not on `phase-b-eval`), and optional. It takes about a
+minute, records nothing, and needs no calibration.
+
+C1 adds `0.4 · sin(head angle)` back to the eye features. Both the 0.4 and the sign (+) are
+assumptions about a real camera; the tests use a simulated head, so only a real head can confirm
+them. This check measures them on yours.
+
+**Run it** with the gaze camera on (⚙ Caregiver → Start Gaze Camera). Open the browser console
+(Chrome: View ▸ Developer ▸ JavaScript Console, or ⌥⌘J on a Mac) and type:
+
+```js
+await LumiGaze.debugHeadComp()
+```
+
+For 15 seconds, keep your eyes on **one point**, such as the centre of the screen, while you slowly
+turn your head left and right, then nod up and down, about ±15–20°. The head moves; the eyes stay
+on the point. `LumiGaze.debugHeadComp('stop')` ends it early.
+
+**The lines** (twice a second) show the head angles and then, for `lx ly rx ry`, the change since the
+first frame, measured three ways:
+- `Δimage`: as Phase B measures them;
+- `Δhead`: in C1's head frame, before the head angle is added back;
+- `Δcomp`: as C1 feeds the model.
+
+With the right sign and gain, `Δcomp` stays near 0 while `Δimage` swings.
+
+**The report** gives, for the turn and for the nod, slopes in eye widths per unit sin(angle), and a verdict:
+- **sign OK**: the head-frame feature moves against the head, as C1 assumes. "The data wants gain
+  +0.34" is the gain that would cancel it; the report says how far the gain in use (0.40) is from that.
+- **SIGN WRONG**: it moves the other way, so C1's `+` makes head movement worse. Do not record
+  Phase C sessions with C1 on until this is settled. Keep the numbers.
+- **inconclusive**: the feature hardly followed the head angle. Usually the eyes left the point, or
+  the head moved too little. Run it again.
+- **not enough movement**: the head moved less than 8° peak to peak. Move more.
+- **too few frames**: fewer than 30 frames were usable (the face was lost, or the eyes were shut).
+  Run it again, and leave it the full time.
+
+R² (0 to 1) says how well the feature followed the angle. Below 0.2 there is no verdict, and a
+wanted gain under 0.15 is "inconclusive" too. These limits are judgement calls, tried only on
+simulated data.
+
+`await LumiGaze.debugHeadComp({ gain: 0.3 })` shows what `Δcomp` and the leftover slope would be with
+another gain, with nothing changed. The gain and sign themselves are a code change (`headGain` in
+`improvementOptions`, `gaze/gaze-features.js`), best made deliberately and re-scored with the replay,
+not from one run.
+
+**It changes nothing.** It reads no calibration model, and it does not touch the switches, the
+calibration in use, the smoother or storage, so a v3 or v4 calibration stays active. (Do not use
+`LumiGaze.setImprovements()` for this: switching C1 changes the calibration's feature set, so the
+calibration in use is dropped.) It will not start during a calibration or an evaluation session, and it
+stops if one starts.

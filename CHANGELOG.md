@@ -69,6 +69,13 @@ as at the end of Phase B; the tests check this.
   sessions recorded with them on are not the Phase B baseline.
 - **Server:** accepts a version-4 calibration, and checks that its version and feature set
   agree.
+- **`LumiGaze.debugHeadComp()`:** a console check of C1's head-turn gain and sign on a real
+  camera ([how to use it](docs/RECORDING.md)). You keep your eyes on one point and turn and nod
+  your head. It measures `lx ly rx ry` three ways (Phase B, C1's head frame, C1 as the model
+  sees it), and says whether the sign is right and which gain the data wants. It changes nothing:
+  not the switches, the calibration in use or storage. (`setImprovements()` drops the calibration
+  when C1 changes.) It refuses to run during a calibration or an evaluation session. Tested on a
+  simulated head only; nothing in it has been measured on a person.
 
 ### Fixed
 

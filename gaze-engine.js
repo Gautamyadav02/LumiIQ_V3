@@ -125,6 +125,7 @@ const LumiGaze = {
     // reload brings back the defaults, and every evaluation session records them.
     improvements: GazeFeatures.flags('all'),
     _improvementOpts: null,       // GazeFeatures.improvementOptions(improvements), cached
+    _headCompRun: null,           // the debugHeadComp() check in progress, if any
 
     // ─────────────────────────────────────────────────────
     //  INIT — load MediaPipe + construct V3 subsystems
@@ -239,6 +240,107 @@ const LumiGaze = {
 
     /** The switches in force, for an evaluation session's record (a copy). */
     evalFlags() { return { ...this.improvements }; },
+
+    /**
+     * Check C1's head-turn gain and sign on the live camera (docs/RECORDING.md, "Checking C1's sign
+     * and gain live"). From the browser console, with the camera running:
+     *
+     *     await LumiGaze.debugHeadComp()      // keep your eyes on ONE point; turn and nod your head ±15–20° for 15 s
+     *     LumiGaze.debugHeadComp('stop')      // end early; the report is printed
+     *
+     * Each frame it measures lx ly rx ry three ways from the same landmarks (Phase B's image ratio,
+     * C1's head-frame ratio, and C1's feature with the head angle added back), prints the changes
+     * against the first frame, and at the end fits them against sin(angle): the gain the data wants,
+     * signed, and whether C1's sign is right (GazeFeatures.headCompSummary).
+     *
+     * Passive. It does not touch the improvement switches, the calibration, the smoother, the dwell
+     * controller or storage, and it reads no model: v3, v4 or no calibration all work. Its only contact
+     * with the engine is a wrapper around _extractFeatures that returns the original result untouched
+     * and is taken off when the check ends. An error inside the check ends it and is logged, never
+     * thrown into the frame. It refuses to start during a calibration or an evaluation recording, and
+     * ends if one starts.
+     *
+     * @param {{seconds?: number, gain?: number, every?: number, log?: Function|false}|'stop'} [opts]
+     *   seconds: how long (15); gain: the gain to try for "comp" (default: the one C1 uses); every: ms
+     *   between live lines (500); log: (line, record) => …, default console.log, false for silence
+     * @returns {Promise<object>} the summary: GazeFeatures.headCompSummary() plus reason ('done',
+     *   'stopped', 'interrupted', 'timeout' or 'error'), seconds and skipped (frames not usable)
+     */
+    debugHeadComp(opts) {
+        if (opts === 'stop') return this._headCompRun ? this._headCompRun.stop() : Promise.resolve(null);
+        if (this.isCalibrating) throw new Error('Finish or cancel the calibration before checking head compensation.');
+        if (this.captureRaw) throw new Error('An evaluation session is recording: check head compensation outside it.');
+        if (this._headCompRun) throw new Error("A head-compensation check is already running; LumiGaze.debugHeadComp('stop') ends it.");
+
+        const o = opts || {};
+        const seconds = o.seconds > 0 ? o.seconds : 15;
+        const every = o.every >= 0 ? o.every : 500;
+        const gain = o.gain != null ? o.gain : GazeFeatures.improvementOptions(GazeFeatures.flags(['C1'])).features.headGain;
+        const log = o.log === false ? () => {} : typeof o.log === 'function' ? o.log : (line) => console.log(line);
+        let logFailed = false;
+        const say = (line, record) => {
+            try { log(line, record); }
+            catch (err) {
+                if (!logFailed) console.error('Head-compensation check: the log function failed:', err);
+                logFailed = true;
+            }
+        };
+
+        const engine = this;
+        const original = this._extractFeatures;
+        const frames = [];
+        const startedAt = performance.now();
+        let active = true, ref = null, lastLine = -Infinity, skipped = 0, timer = null, resolve;
+        const done = new Promise((r) => { resolve = r; });
+
+        const finish = (reason) => {
+            if (!active) return done;
+            active = false;
+            clearTimeout(timer);
+            if (engine._extractFeatures === wrapper) engine._extractFeatures = original;
+            engine._headCompRun = null;
+            const summary = { ...GazeFeatures.headCompSummary(frames, { gain }), reason, seconds: (performance.now() - startedAt) / 1000, skipped };
+            GazeFeatures.headCompReport(summary).forEach((line) => say(line));
+            resolve(summary);
+            return done;
+        };
+
+        const onFrame = (lm, matrix, settings) => {
+            if (engine.isCalibrating || engine.captureRaw) { finish('interrupted'); return; }
+            const now = performance.now();
+            const frame = GazeFeatures.headCompFrame(lm, matrix, settings, { ...engine._featureOptions(), headGain: gain });
+            if (!frame) skipped++;
+            else {
+                frames.push(frame);
+                if (!ref) ref = frame;
+                if (now - lastLine >= every) {
+                    lastLine = now;
+                    const change = (variant) => frame[variant].map((v, i) => v - ref[variant][i]);
+                    const record = { t: now, yaw: frame.yaw, pitch: frame.pitch, image: frame.image, head: frame.head, comp: frame.comp,
+                                     delta: { image: change('image'), head: change('head'), comp: change('comp') } };
+                    say(GazeFeatures.headCompLine(record), record);
+                }
+            }
+            if (now - startedAt >= seconds * 1000) finish('done');
+        };
+
+        const wrapper = function (lm, matrix, settings) {
+            const fx = original.call(this, lm, matrix, settings);   // the engine's own result, whatever the check does next
+            if (active) {
+                try { onFrame(lm, matrix, settings); }
+                catch (err) { console.error('Head-compensation check failed:', err); finish('error'); }
+            }
+            return fx;
+        };
+
+        this._extractFeatures = wrapper;
+        this._headCompRun = { stop: () => finish('stopped') };
+        timer = setTimeout(() => finish('timeout'), seconds * 1000 + 3000);   // frames may stop coming
+        say(`Head-compensation check, ${seconds} s: keep your eyes on ONE point and slowly turn and nod your head, about ±15–20°. The calibration and the switches are not touched.`);
+        say('Each line: the head angles, then the change since the first frame of lx ly rx ry as Phase B measures them (Δimage), in C1\'s head frame before the head angle is added back (Δhead), and as C1 feeds the model (Δcomp). With the right sign and gain Δcomp stays near 0.');
+        if (!this.isTracking) say('The gaze camera is not running: start it first, or no frames will arrive.');
+        return done;
+    },
 
     _buildSubsystems() {
         const s = LumiStore.getSettings();

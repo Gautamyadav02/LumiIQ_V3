@@ -303,8 +303,140 @@
     };
   }
 
+  // ── Phase C (C1): a live check of the head-turn gain and sign ───────
+  // C1 adds back gain · sin(head angle) to the eye features (see extract). The gain, 0.4, and the
+  // sign, +, are assumptions about a real camera that only a real head can confirm. With the eyes held
+  // on ONE point while the head turns and nods, the head-frame features (before the add-back) should
+  // move by −gain per unit sin(angle), and the compensated features then stay put. These functions
+  // only measure; LumiGaze.debugHeadComp() feeds them from the camera. The gaze pipeline uses none of them.
+  const HEAD_COMP = { minFrames: 30, minSwingDeg: 8, minR2: 0.2, minGain: 0.15 };
+  const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+  const signed = (v, digits = 2) => (v >= 0 ? '+' : '') + v.toFixed(digits);
+
+  /**
+   * One frame's four eye features [lx, ly, rx, ry], measured three ways from the same landmarks:
+   *   image: Phase B's iris-in-eye ratio;
+   *   head:  C1's head-frame ratio, before the head turn and nod are added back;
+   *   comp:  C1's feature as the model would see it (head + gain · sin(angle)).
+   * Null when the frame has no usable eye (as the live engine judges it) or no head matrix or
+   * landmark depth, where C1 itself falls back to `image`.
+   * @param {object} [opts]  the feature options the live engine uses (aspect, earFloor, …);
+   *   headFrame is replaced, and headGain is the gain of `comp` (default: the gain C1 uses)
+   */
+  function headCompFrame(lm, matrix, settings, opts) {
+    const o = opts || NO_OPTIONS;
+    const gain = o.headGain != null ? o.headGain : improvementOptions(flags(['C1'])).features.headGain;
+    const image = extract(lm, matrix, settings, { ...o, headFrame: false, headGain: 0 });
+    const head = extract(lm, matrix, settings, { ...o, headFrame: true, headGain: 0 });
+    const comp = extract(lm, matrix, settings, { ...o, headFrame: true, headGain: gain });
+    if (!image.features || !head.features || !comp.features || !head.pose) return null;
+    return {
+      yaw: head.pose[0], pitch: head.pose[1],
+      image: image.features.slice(0, 4), head: head.features.slice(0, 4), comp: comp.features.slice(0, 4),
+    };
+  }
+
+  /** Least squares of y on one or two regressors fitted together: the slopes, and the share of y's variance they explain. */
+  function fitSlopes(regressors, y) {
+    const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+    const centred = (a) => { const m = mean(a); return a.map((v) => v - m); };
+    const xs = regressors.map(centred), yc = centred(y);
+    const sxy = xs.map((x) => dot(x, yc)), syy = dot(yc, yc);
+    let slopes = xs.map((x, i) => sxy[i] / dot(x, x));
+    let explained = Math.max(...slopes.map((k, i) => k * sxy[i]));
+    if (xs.length === 2) {
+      const a = dot(xs[0], xs[0]), b = dot(xs[0], xs[1]), c = dot(xs[1], xs[1]), det = a * c - b * b;
+      // If the two angles moved as one they cannot be told apart, and each keeps its own fit.
+      if (det > 1e-9 * a * c) {
+        slopes = [(c * sxy[0] - b * sxy[1]) / det, (a * sxy[1] - b * sxy[0]) / det];
+        explained = slopes[0] * sxy[0] + slopes[1] * sxy[1];
+      }
+    }
+    return { slopes, r2: syy > 0 ? Math.min(1, explained / syy) : 0 };
+  }
+
+  /**
+   * What a run of headCompFrame() results says about C1's sign and gain. Per axis (x: the head turn,
+   * against lx and rx; y: the nod, against ly and ry) it fits how much each measurement changes per
+   * unit sin(angle), fitting the two angles together if both moved. `gainWanted` is the gain that would
+   * cancel the head-frame feature: negative means the compensation has the wrong sign.
+   * @param {object[]} frames  headCompFrame() results
+   * @param {{gain?: number}} [opts]  the gain `comp` was measured with
+   * @returns {{frames: number, gain: number, x: object, y: object}} each axis has a `verdict`:
+   *   'sign-ok' | 'sign-wrong' | 'weak' (the feature hardly follows the angle) | 'not-moved' | 'too-few-frames'
+   */
+  function headCompSummary(frames, opts) {
+    const gain = opts && opts.gain != null ? opts.gain : improvementOptions(flags(['C1'])).features.headGain;
+    const n = frames.length;
+    const swing = (key) => {
+      let lo = Infinity, hi = -Infinity;
+      for (const f of frames) { lo = Math.min(lo, f[key]); hi = Math.max(hi, f[key]); }
+      return n ? hi - lo : 0;
+    };
+    const swings = { yaw: swing('yaw'), pitch: swing('pitch') };
+    const used = ['yaw', 'pitch'].filter((k) => n >= HEAD_COMP.minFrames && swings[k] >= HEAD_COMP.minSwingDeg);
+    const sines = used.map((k) => frames.map((f) => Math.sin((f[k] * Math.PI) / 180)));
+
+    const axis = (key, columns) => {
+      const swingDeg = swings[key];
+      if (n < HEAD_COMP.minFrames) return { verdict: 'too-few-frames', swingDeg };
+      const at = used.indexOf(key);
+      if (at < 0) return { verdict: 'not-moved', swingDeg };
+      const fit = (variant) => columns.map((c) => fitSlopes(sines, frames.map((f) => f[variant][c])));
+      const slope = (fits) => mean(fits.map((r) => r.slopes[at]));
+      const head = fit('head');
+      const headSlope = slope(head), r2 = mean(head.map((r) => r.r2));
+      const gainWanted = -headSlope;
+      const verdict = r2 < HEAD_COMP.minR2 ? 'weak'
+        : gainWanted >= HEAD_COMP.minGain ? 'sign-ok'
+        : gainWanted <= -HEAD_COMP.minGain ? 'sign-wrong' : 'weak';
+      return { verdict, swingDeg, imageSlope: slope(fit('image')), headSlope, compSlope: slope(fit('comp')), gainWanted, r2 };
+    };
+    return { frames: n, gain, x: axis('yaw', [0, 2]), y: axis('pitch', [1, 3]) };
+  }
+
+  const HEAD_COMP_ENDED = {
+    stopped: 'stopped by you',
+    interrupted: 'a calibration or an evaluation recording started',
+    timeout: 'no camera frames arrived',
+    error: 'the check failed, see the console',
+  };
+
+  /** The lines the console helper prints at the end: a headCompSummary() plus, optionally, reason, seconds and skipped. */
+  function headCompReport(s) {
+    const out = [`Head-compensation check: ${s.frames} frames${s.seconds != null ? ` in ${s.seconds.toFixed(1)} s` : ''}`
+      + `${s.skipped ? `, ${s.skipped} skipped (no head matrix, landmark depth or open eye)` : ''}; gain tried ${s.gain.toFixed(2)}.`];
+    if (s.reason && s.reason !== 'done') out.push(`Ended early: ${HEAD_COMP_ENDED[s.reason] || s.reason}.`);
+    out.push('Slopes are eye widths per unit sin(angle). With the right sign and gain, "comp" is about 0.');
+    for (const [a, label] of [[s.x, 'head turn (yaw)  '], [s.y, 'head nod (pitch) ']]) {
+      if (a.verdict === 'too-few-frames') {
+        out.push(`${label}: too few frames (${s.frames}) to judge; at least ${HEAD_COMP.minFrames} are needed.`);
+      } else if (a.verdict === 'not-moved') {
+        out.push(`${label}: the head moved ${a.swingDeg.toFixed(0)}° peak to peak; at least ${HEAD_COMP.minSwingDeg}° is needed, ±15–20° is better.`);
+      } else {
+        out.push(`${label}: image ${signed(a.imageSlope)}  head-frame ${signed(a.headSlope)}  comp ${signed(a.compSlope)}  R² ${a.r2.toFixed(2)}`);
+        if (a.verdict === 'sign-ok') {
+          const off = Math.round((s.gain / a.gainWanted - 1) * 100);
+          out.push(`    sign OK. The data wants gain ${signed(a.gainWanted)}; the ${s.gain.toFixed(2)} in use is ${Math.abs(off)}% ${off >= 0 ? 'high' : 'low'}.`);
+        } else if (a.verdict === 'sign-wrong') {
+          out.push(`    SIGN WRONG. The head-frame feature moves the other way (the data wants gain ${signed(a.gainWanted)}), so adding ${signed(s.gain)}·sin(angle) makes it worse.`);
+        } else {
+          out.push(`    inconclusive: the head-frame feature hardly follows the head angle (gain wanted ${signed(a.gainWanted)}, R² ${a.r2.toFixed(2)}). Keep your eyes on one point and move your head more.`);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** One live line: the head angles, and the change of each measurement (lx ly rx ry) against the first frame. */
+  function headCompLine(rec) {
+    const cols = (v) => v.map((x) => signed(x, 3)).join(' ');
+    return `yaw ${signed(rec.yaw, 1)}° pitch ${signed(rec.pitch, 1)}° | Δimage ${cols(rec.delta.image)} | Δhead ${cols(rec.delta.head)} | Δcomp ${cols(rec.delta.comp)}`;
+  }
+
   const api = { FEATURE_DIM, EYES, RECORD_INDICES, dist, headPose, extract, confidence,
-                smoothConfidence, dwellScale, pack, unpack, IMPROVEMENTS, flags, improvementOptions };
+                smoothConfidence, dwellScale, pack, unpack, IMPROVEMENTS, flags, improvementOptions,
+                headCompFrame, headCompSummary, headCompReport, headCompLine };
   root.GazeFeatures = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

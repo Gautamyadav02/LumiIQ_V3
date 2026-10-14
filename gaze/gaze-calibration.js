@@ -107,6 +107,10 @@
       // at that moment, so a second settle authority here would only eat the
       // front of the collection window twice.
       this.settleMs = opts.settleMs != null ? opts.settleMs : 0;
+      // How the quality report and lambda are cross-validated: 'loto' (leave one
+      // target out, the default since AUDIT M1) or 'interleaved' (the old, optimistic
+      // method, kept so the two can be compared on the same samples).
+      this.cv = opts.cv === 'interleaved' ? 'interleaved' : 'loto';
       this.reset();
     }
 
@@ -196,27 +200,24 @@
       if (this.trainX.length < 10) {
         return { ok: false, reason: 'insufficient_samples', samples: this.trainX.length };
       }
-      const targets = (this.trainTargetIndices && this.trainTargetIndices.length === this.trainX.length)
-        ? this.trainTargetIndices : null;
+      // Lambda is chosen, and the error estimated, by leaving one whole target
+      // out at a time (AUDIT M1), so frames of a target are never in both the
+      // training and the test fold. selectLambda falls back to interleaved folds
+      // if there are fewer than three targets; cvMethod records what was used.
+      const targets = this.cv === 'loto' ? this.trainTargetIndices : null;
       const selX = RMath.selectLambda(this.trainX, this.trainYx, this.degree, undefined, targets);
       const selY = RMath.selectLambda(this.trainX, this.trainYy, this.degree, undefined, targets);
 
+      // The final models are fitted on all the clean samples.
       this.modelX = new Ridge({ degree: this.degree, lambda: selX.lambda }).fit(this.trainX, this.trainYx);
       this.modelY = new Ridge({ degree: this.degree, lambda: selY.lambda }).fit(this.trainX, this.trainYy);
 
-      // Leave-one-target-out metrics (AUDIT M1). Groups frames of the same target
-      // so calibration targets are never leaked between train and test folds.
-      const cvX = targets && RMath.crossValLOTO
-        ? RMath.crossValLOTO(this.trainX, this.trainYx, targets, { degree: this.degree, lambda: selX.lambda })
-        : RMath.crossValR2(this.trainX, this.trainYx, { degree: this.degree, lambda: selX.lambda });
-      const cvY = targets && RMath.crossValLOTO
-        ? RMath.crossValLOTO(this.trainX, this.trainYy, targets, { degree: this.degree, lambda: selY.lambda })
-        : RMath.crossValR2(this.trainX, this.trainYy, { degree: this.degree, lambda: selY.lambda });
-      const r2 = (cvX.r2 + cvY.r2) / 2;
-
+      const r2 = (selX.r2 + selY.r2) / 2;
       const w = screen && screen.width ? screen.width : 1920;
       const h = screen && screen.height ? screen.height : 1080;
-      const accuracyPx = Math.hypot(cvX.rmse * w, cvY.rmse * h);
+      const rmseXPx = selX.rmse * w;
+      const rmseYPx = selY.rmse * h;
+      const accuracyPx = Math.hypot(rmseXPx, rmseYPx);
 
       this.featureDim = this.trainX[0].length;
       this.report = {
@@ -224,14 +225,16 @@
         samples: this.trainX.length,
         points: this.layout.length,
         r2: Math.max(0, r2),
-        r2x: Math.max(0, cvX.r2),
-        r2y: Math.max(0, cvY.r2),
+        r2x: Math.max(0, selX.r2),
+        r2y: Math.max(0, selY.r2),
         confidence: Math.round(Math.max(0, Math.min(1, r2)) * 100),
         accuracyPx: Math.round(accuracyPx),
+        rmseXPx: Math.round(rmseXPx * 10) / 10,   // the same estimate, per axis
+        rmseYPx: Math.round(rmseYPx * 10) / 10,
         rating: ratingFor(r2),
         lambdaX: selX.lambda,
         lambdaY: selY.lambda,
-        cvMethod: targets ? 'loto' : 'kfold',
+        cvMethod: selX.method,          // 'loto' or 'interleaved': how the estimate was made
       };
       this.isReady = true;
       return this.report;

@@ -298,11 +298,11 @@
   }
 
   /**
-   * k-fold cross-validated R² for a given degree/lambda. Used to (a) auto-select
-   * regularization strength and (b) estimate accuracy for the calibration report.
-   * Caveat (AUDIT M1): folds are interleaved, so frames of the same calibration
-   * target appear in both training and test folds; with such correlated frames
-   * the estimate is optimistic. To be revisited with Phase 1 measurements.
+   * Interleaved k-fold cross-validated R² for a given degree/lambda. This was the
+   * calibration report's method until AUDIT M1: sample i goes to fold i % k, so
+   * frames of the same calibration target sit in both the training and the test
+   * folds, and with such correlated frames the estimate is optimistic. It is
+   * kept for comparison and for data that has no target grouping.
    */
   function crossValR2(X, y, opts = {}, k = 5) {
     const n = X.length;
@@ -324,60 +324,61 @@
       const pred = model.predict(Xte);
       for (let i = 0; i < yte.length; i++) { yTrueAll.push(yte[i]); yPredAll.push(pred[i]); }
     }
-    if (yTrueAll.length === 0) return { r2: 0, rmse: 1 };
-    return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll) };
+    if (yTrueAll.length === 0) return { r2: 0, rmse: 1, method: 'interleaved' };
+    return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll), method: 'interleaved' };
   }
 
   /**
-   * Leave-one-target-out (LOTO) cross-validation for a grouped dataset (AUDIT M1).
-   * Target indices (e.g. 0..K-1 for K targets) partition samples into groups;
-   * each fold trains on all targets except one and evaluates on the held-out target.
-   * This prevents leaking correlated frames of the same target between train and test.
+   * Leave-one-target-out (LOTO) cross-validation (AUDIT M1). targetIndices[i]
+   * says which calibration target sample i belongs to. Each fold trains on every
+   * target but one and tests on the one left out, so frames of one target are
+   * never on both sides.
+   *
+   * It needs at least three targets; with fewer, `method` is 'none' and nothing
+   * is estimated. It tends to be pessimistic at the corners of the grid, where
+   * the held-out target has to be extrapolated; the real yardstick is a set of
+   * validation targets shown after calibration.
+   *
+   * @returns {{r2:number, rmse:number|null, folds:number, perTarget:Array, method:string}}
    */
-  function crossValLOTO(X, y, targetIndices, opts = {}) {
+  function crossValLOTO(X, y, lambda, targetIndices, degree = 2) {
     const n = X.length;
-    if (!targetIndices || targetIndices.length !== n) {
-      return crossValR2(X, y, opts, 5);
-    }
-    const uniqueTargets = Array.from(new Set(targetIndices));
-    if (uniqueTargets.length < 2) {
-      return crossValR2(X, y, opts, 2);
-    }
+    const none = { r2: 0, rmse: null, folds: 0, perTarget: [], method: 'none' };
+    if (!targetIndices || targetIndices.length !== n) return none;
+    const groups = Array.from(new Set(targetIndices));
+    if (groups.length < 3) return none;
 
     const yTrueAll = [];
     const yPredAll = [];
-
-    for (let t = 0; t < uniqueTargets.length; t++) {
-      const heldOut = uniqueTargets[t];
+    const perTarget = [];
+    for (const heldOut of groups) {
       const Xtr = [], ytr = [], Xte = [], yte = [];
       for (let i = 0; i < n; i++) {
-        if (targetIndices[i] === heldOut) {
-          Xte.push(X[i]);
-          yte.push(y[i]);
-        } else {
-          Xtr.push(X[i]);
-          ytr.push(y[i]);
-        }
+        if (targetIndices[i] === heldOut) { Xte.push(X[i]); yte.push(y[i]); }
+        else { Xtr.push(X[i]); ytr.push(y[i]); }
       }
       if (Xtr.length < 3 || Xte.length === 0) continue;
-      const model = new RidgeRegressor(opts).fit(Xtr, ytr);
+      const model = new RidgeRegressor({ degree, lambda }).fit(Xtr, ytr);
       const pred = model.predict(Xte);
-      for (let i = 0; i < yte.length; i++) {
-        yTrueAll.push(yte[i]);
-        yPredAll.push(pred[i]);
-      }
+      for (let i = 0; i < yte.length; i++) { yTrueAll.push(yte[i]); yPredAll.push(pred[i]); }
+      perTarget.push({ target: heldOut, n: yte.length, rmse: rmse(yte, pred) });
     }
-    if (yTrueAll.length === 0) return { r2: 0, rmse: 1 };
-    return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll) };
+    if (yTrueAll.length === 0) return none;
+    return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll),
+             folds: perTarget.length, perTarget, method: 'loto' };
   }
 
-  /** Pick the lambda from a grid that maximizes cross-validated R². */
+  /**
+   * Pick the lambda from a grid that maximizes cross-validated R². With
+   * targetIndices the folds are whole targets (LOTO); without them, or with
+   * fewer than three targets, they are interleaved. `method` says which was used.
+   */
   function selectLambda(X, y, degree = 2, grid = [0.01, 0.05, 0.2, 1.0, 5.0, 20.0], targetIndices = null) {
-    let best = { lambda: grid[0], r2: -Infinity, rmse: Infinity };
-    const cvFn = (opts) => targetIndices ? crossValLOTO(X, y, targetIndices, opts) : crossValR2(X, y, opts);
+    const useLoto = !!targetIndices && crossValLOTO(X, y, grid[0], targetIndices, degree).method === 'loto';
+    let best = { lambda: grid[0], r2: -Infinity, rmse: Infinity, method: useLoto ? 'loto' : 'interleaved' };
     for (const lambda of grid) {
-      const { r2, rmse: e } = cvFn({ degree, lambda });
-      if (r2 > best.r2) best = { lambda, r2, rmse: e };
+      const cv = useLoto ? crossValLOTO(X, y, lambda, targetIndices, degree) : crossValR2(X, y, { degree, lambda });
+      if (cv.r2 > best.r2) best = { lambda, r2: cv.r2, rmse: cv.rmse, method: cv.method };
     }
     return best;
   }

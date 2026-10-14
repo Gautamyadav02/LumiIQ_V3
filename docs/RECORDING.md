@@ -37,7 +37,13 @@ days**. That is 6 sessions at the minimum; 8 (2 per lighting per day) is better 
   (light from one side). Use the same two labels throughout.
 
 **Record the baseline on branch `phase-b-eval`.** It must measure the app before any of the
-accuracy changes in `phase-c-gaze`.
+accuracy changes in `phase-c-gaze`. Each session records which changes were on; `eval:report`
+warns if any were.
+
+The Phase C comparison (`npm run eval:ablation`) replays these same baseline sessions with each
+change switched on, so it needs no extra recording. Its held-out set is the **last day** you record
+on (see [ADR 0003](adr/0003-phase-c-ablation.md)). Record that day's sessions only when you are
+done changing the code.
 
 ## Before each session
 
@@ -89,6 +95,7 @@ file name it prints. Press **Restore my previous settings** if you want them bac
 
 ```bash
 npm run eval:report        # writes eval/BASELINE.md from every session in eval/sessions/
+npm run eval:ablation      # writes eval/IMPROVEMENTS.md: each Phase C change against the baseline
 node eval/replay.js        # prints each session's figures and its replay check
 ```
 

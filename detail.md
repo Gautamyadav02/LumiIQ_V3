@@ -10,12 +10,13 @@ something has not been measured, this document says so.*
 
 | | |
 |---|---|
-| **Current code** | Branch `phase-b-eval`: the original app + 18 audit-fix commits + 5 diagnosis commits + the evaluation tool |
-| **On GitHub** | `main` and `fix/phase0-findings` only. `phase-a-diagnosis`, `phase-0-explain` and `phase-b-eval` are **local only** |
-| **Tests today** | `npm test` passes: 32 gaze unit tests, 1 smoke test, 232 Node tests (231 pass, 1 known "todo"), 37 server tests |
+| **Current code** | Branch `phase-c-gaze`: the original app + 18 audit-fix commits + 5 diagnosis commits + the evaluation tool + seven switchable accuracy changes (C1–C7, all on) |
+| **On GitHub** | `main` and `fix/phase0-findings` only. `phase-a-diagnosis`, `phase-0-explain`, `phase-b-eval` and `phase-c-gaze` are **local only** |
+| **Tests today** | `npm test` passes: 32 gaze unit tests, 1 smoke test, 285 Node tests (284 pass, 1 known "todo"), 39 server tests |
 | **Works** | Keyboard, phrases, body map, speech, alarms, sleep mode, calibration, dwell and blink selection, caregiver dashboard, diagnostics, the evaluation wizard, local server |
 | **Main problem** | **Gaze accuracy is poor in real use.** The author and the supervisor have both seen this. It has not been measured yet, so there is no number for it |
 | **The evaluation tool** | **Built** (the dissertation's Section 3.6): wizard, recording, replay and report. **No real session has been recorded yet**, so `eval/BASELINE.md` is empty. Every number the tool has produced so far is synthetic |
+| **Accuracy changes (Phase C)** | C1–C7 built and tested on synthetic data, each switchable (section 9.8). **Not yet measured on a person**: `eval/IMPROVEMENTS.md` is an empty template |
 | **Waiting on** | Real sessions (see `docs/RECORDING.md`), and the Phase A on-screen checks (D1–D6), which have not been reported back |
 
 **What changed since the 28 September version of this document:**
@@ -28,6 +29,8 @@ something has not been measured, this document says so.*
   - a serious bug found and fixed: **the camera stopped whenever its picture was scrolled out of
     view**, silently stopping gaze and every alarm (section 6);
   - the calibration's own quality estimate now uses leave-one-target-out (audit M1, section 10.3).
+- **Phase C (14 Oct):** seven accuracy changes, each a switch, all on by default (section 9.8), and
+  `npm run eval:ablation`, which compares each one with the baseline on held-out sessions.
 - **Still open:** three problems found in Phase A (section 19, items 2–4).
 
 ---
@@ -528,6 +531,33 @@ Nothing in the pipeline reads this record, so it cannot change gaze behaviour. T
 use it, and the Phase B session recorder will too.
 
 ---
+
+### 9.8 Phase C changes C1–C7 (branch `phase-c-gaze`)
+
+Each change is a switch (`GazeFeatures.IMPROVEMENTS`). All are on by default on this branch;
+`LumiGaze.setImprovements('none')` gives exactly the Phase B app. Every evaluation session
+records which were on. Details and the reasons: `CHANGELOG.md` (Phase C) and
+`docs/adr/0003-phase-c-ablation.md`.
+
+| | Change | Where |
+|---|---|---|
+| C1 | Eye features in the head's own frame, head angle added back (0.4 × sin) | `gaze/gaze-features.js` |
+| C2 | Gaze needs an eye opening above 0.16; confidence ramps up above it | `gaze/gaze-features.js` |
+| C3 | Stricter outlier filter for calibration samples | `gaze/gaze-calibration.js` |
+| C4 | Ignore calibration samples from the first 300 ms after a target appears | `gaze/gaze-calibration.js` |
+| C5 | Degree 1 or 2, whichever has the lower leave-one-target-out error | `gaze/gaze-calibration.js` |
+| C6 | Low-confidence frames smoothed more | `gaze/gaze-stabilizer.js` |
+| C7 | Drift detector that looks for a consistent direction | `gaze/drift-detector.js`, `app.js` |
+
+**How they are judged:**
+- `npm run eval:ablation` replays every recorded session with:
+  - the baseline;
+  - each change alone;
+  - all seven together.
+- **Held-out set:** the sessions of the last recording day. **Development set:** all earlier days.
+- **Criteria** (fixed before any recording): 15 % better accuracy, or a lower p95, or fewer
+  wrong selections, without more false activations or a longer time per selection.
+- **No result exists yet.**
 
 ## 10. Calibration
 

@@ -3,6 +3,80 @@
 Changes to LumiIQ, the browser app at the root of this folder. The IDs (C1, H4, …) refer to the
 findings in [AUDIT.md](AUDIT.md). The original app is preserved as git tag **`LumiIQ_V1`**.
 
+## Unreleased — Phase C: seven accuracy changes, each switchable (branch `phase-c-gaze`)
+
+Aimed at the poor gaze accuracy seen in real use. **None of them has been measured on a person
+yet:** no session has been recorded, so `eval/IMPROVEMENTS.md` is an empty template. Every number
+produced so far is synthetic. Design decisions, the held-out split and the success criteria, fixed
+before any recording: [ADR 0003](docs/adr/0003-phase-c-ablation.md).
+
+All seven are **on by default on this branch**. `LumiGaze.setImprovements('none' | 'all' | ['C1', …])`
+switches them (not saved; a reload restores the defaults). With all off, the app behaves exactly
+as at the end of Phase B; the tests check this.
+
+### Changed (each one a switch)
+
+- **C1 Head-pose compensation** (`gaze/gaze-features.js`).
+  - **What:** with the head matrix and landmark depth, the iris position is measured in the
+    head's own frame. It is measured along the eye-corner line, and below it in eye widths.
+    The head turn and nod are then added back as 0.4 × sin(angle).
+  - **Why:** gaze direction is head angle plus eye angle. The separate angle features had
+    almost no spread in a head-still calibration, so any later head movement was blown up.
+  - **Kept as before:** the "iris at the corner" confidence check, the raw ratio on the
+    Diagnostics inset and the uncalibrated cursor still use the iris-in-eye ratio.
+  - **Fallback:** without a matrix or depth, the Phase B features are used.
+  - **Calibrations:** they are now version 4 (feature set "head").
+- **C2 Eye-opening floor** (0.16).
+  - **What:** an eye is used for gaze only above max(EAR threshold, 0.16). Confidence now
+    rises gradually above the floor, instead of halving below 0.12.
+  - **Unchanged:** blinks and the eyes-closed alarm use the caregiver's threshold.
+  - **New reason:** "eyes_narrow" (open, but too narrow), shown on the status pill and in
+    Diagnostics.
+- **C3 Stricter outlier filter:** a calibration sample is kept only if fewer than a quarter
+  of its features are outliers (before: up to 3 of 10).
+- **C4 Settle guard:** calibration samples from the first 300 ms after a target appears are
+  ignored. The app already waits 500 ms, so this is a second guard.
+- **C5 Degree 1 or 2:** the calibration fits both and keeps the one with the lower
+  leave-one-target-out error. Degree 1 gets its own lambda grid.
+- **C6 Confidence-weighted smoothing:** the smoother's cutoff is scaled by the frame's
+  confidence (never below 0.3×), so less trusted frames are smoothed more.
+- **C7 Directional drift detector.**
+  - **What:** recalibration is suggested after 6 selections in a row on the same side of the
+    target's centre, or a median offset over 0.35 of the target size. A new calibration starts
+    the detector afresh.
+  - **Before:** the old average-distance rule almost never fired (audit M10).
+
+### Added
+
+- **`npm run eval:ablation`** → `eval/IMPROVEMENTS.md`. It replays every session with:
+  - the baseline;
+  - each change alone;
+  - all seven together.
+
+  Held-out sessions (the last recording day) are the result; development sessions are listed
+  apart. `--synthetic` writes a gitignored pipeline check.
+- **Replay** (`eval/replay.js`):
+  - **"As recorded"** now means the switches each session was recorded with.
+  - **`--improvements`** picks a variant.
+  - **Rebuilt features:** the features are recomputed from the landmarks, with the recorded
+    camera aspect ratio, when C1 or C2 differ.
+  - **Timing:** calibrations are re-fitted at the recorded times.
+  - **Also replayed:** the dwell half of the selection test and the drift detector.
+- **Sessions** record the switches in force, the camera picture's size, and when each
+  calibration point was committed. The last two are also on `phase-b-eval`, so that baseline
+  sessions have them.
+- **`eval:report`** lists the improvements each session was recorded with. It warns that
+  sessions recorded with them on are not the Phase B baseline.
+- **Server:** accepts a version-4 calibration, and checks that its version and feature set
+  agree.
+
+### Fixed
+
+- **A saved calibration is restored only if it fits.** It must have been made from the features
+  in use; otherwise the caregiver is asked to recalibrate, and nothing crashes.
+- **Settle-guard frames:** a frame the C4 guard drops is no longer marked as a calibration
+  sample in the session record.
+
 ## Unreleased — Phase B: the evaluation tool (branch `phase-b-eval`)
 
 The tool the dissertation's Section 3.6 describes. How to record: [docs/RECORDING.md](docs/RECORDING.md).

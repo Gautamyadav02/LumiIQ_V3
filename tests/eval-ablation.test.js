@@ -156,6 +156,7 @@ test('end to end on simulated sessions: the cells are the replays\' own figures,
   }
   const md = Ablation.buildAblationReport(sessions, { synthetic: true, generatedAt: 'x' });
   assert.match(md, /SYNTHETIC/);
+  assert.match(md, /cannot judge the improvements/, 'and why the simulated person says nothing about C1–C7');
   assert.doesNotMatch(md, /replayed real|live real/);
   const held = tableAfter(md, 'Held-out sessions');
   const expect = (improvements) => Replay.replaySession(sessions[1], { improvements, m1: false }).analysis.validation.val9.standard.accuracy.px.toFixed(1);

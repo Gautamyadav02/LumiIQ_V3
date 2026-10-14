@@ -149,10 +149,12 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
 | `eval/metrics.js` | Accuracy, precision, selection and lag metrics (`LumiMetrics`) |
 | `eval/replay.js` | Node: replays recorded sessions through the real gaze code |
 | `eval/report.js` | Node: writes `eval/BASELINE.md` |
+| `eval/ablation.js` | Node: writes `eval/IMPROVEMENTS.md` (each Phase C change against the baseline) |
 
 ## ✅ Tests
 
 ```bash
 npm test              # JavaScript unit tests + server integration tests; nothing to install
 npm run eval:report   # eval/BASELINE.md from the recorded sessions in eval/sessions/
+npm run eval:ablation # eval/IMPROVEMENTS.md: each Phase C change against the baseline, on held-out sessions
 ```

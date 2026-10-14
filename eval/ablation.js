@@ -166,7 +166,12 @@ function buildAblationReport(sessions, o = {}) {
   if (synthetic) {
     p('# LumiIQ — SYNTHETIC check of the Phase C comparison', '',
       '> **These are not results.** Every number below comes from simulated sessions (a software "person" whose eyes',
-      '> follow a simple rule). The file only shows that the comparison runs end to end.');
+      '> follow a simple rule). The file only shows that the comparison runs end to end.',
+      '>',
+      '> The simulated person cannot judge the improvements either: its eye position is exactly linear in the target',
+      '> (which favours C5\'s degree 1), and when its head "turns" only the head matrix changes, while its landmarks',
+      '> stay put and its eyes do not counter-rotate (so C1 correctly reads a moved gaze, and the head-movement column',
+      '> gets worse). Only sessions recorded with a person can show what C1–C7 do.');
   } else {
     p('# LumiIQ — Phase C: each improvement against the baseline', '',
       'Written by `npm run eval:ablation` from the sessions in `eval/sessions/`. Do not edit by hand: run the command again.');

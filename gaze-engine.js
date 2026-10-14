@@ -62,6 +62,11 @@ const LumiGaze = {
     _closureAlarmed: false,       // one PROLONGED_CLOSURE alarm per closure episode
     _rapidBlinkQuietUntil: 0,     // RAPID_BLINKS at most once per 15 s
     _lastFaceSeen: null,          // time of the last frame with a face (while tracking)
+    _lastFrameAt: null,           // time of the last camera frame of any kind (while tracking)
+    _watchdog: null,              // timer that notices when camera frames stop arriving
+    _stalled: false,
+    _stallAlarmed: false,         // one CAMERA_STALLED alarm per stall
+    STALL_MS: 2000,               // no camera frame for this long = stalled
     _faceLostAlarmed: false,      // one FACE_NOT_DETECTED alarm per episode
     _hiddenSince: null,           // when the page was hidden while tracking
     _pageListenersBound: false,
@@ -256,6 +261,13 @@ const LumiGaze = {
                 } catch (e) { console.warn('Continuous exposure not applied:', e); }
             }
             this.videoElement.srcObject = this.stream;
+            // Start playback explicitly. The video used to rely on the `autoplay`
+            // attribute, and Chrome pauses an autoplay-muted video whenever it is
+            // scrolled out of sight, which silently stopped tracking and alarms.
+            if (typeof this.videoElement.play === 'function') {
+                const playing = this.videoElement.play();
+                if (playing && playing.catch) playing.catch((e) => console.warn('Camera video did not start playing:', e));
+            }
             await new Promise(resolve =>
                 this.videoElement.addEventListener('loadeddata', resolve, { once: true }));
             if (this.stabilizer) this.stabilizer.setBounds(window.innerWidth, window.innerHeight);
@@ -263,6 +275,7 @@ const LumiGaze = {
             this._lastFaceSeen = performance.now();
             this._faceLostAlarmed = false;
             this._runLoop();
+            this._startWatchdog();
             this._notice(null);
             this.updateStatus('Camera active. Calibrate for best accuracy.', 'success');
             return true;
@@ -291,6 +304,7 @@ const LumiGaze = {
 
     stopCamera() {
         this.isTracking = false;
+        this._stopWatchdog();
         if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
         if (this.videoElement) this.videoElement.srcObject = null;
         if (this.stabilizer) this.stabilizer.reset();
@@ -304,6 +318,7 @@ const LumiGaze = {
     _onCameraLost() {
         if (!this.isTracking) return;
         this.isTracking = false;
+        this._stopWatchdog();
         if (this.dwell) this.dwell.cancel();
         this.updateStatus('Camera disconnected — monitoring stopped.', 'error');
         this._notice('Eye monitoring is OFF: the camera disconnected.', 'error');
@@ -322,12 +337,57 @@ const LumiGaze = {
             const secs = Math.round((now - this._hiddenSince) / 1000);
             this._hiddenSince = null;
             this._lastFaceSeen = now;   // the hidden time is not "no face"
+            this._lastFrameAt = now;    // …nor a stalled camera
             LumiStore.addAlertLog('MONITORING_RESUMED', `Eye monitoring resumed after being paused for ${secs}s`);
             this._notice(`Eye monitoring was paused for ${secs}s while the app was hidden.`, 'warning');
         }
     },
 
     _notice(message, level) { if (this.onNotice) this.onNotice(message, level); },
+
+    // ─────────────────────────────────────────────────────
+    //  CAMERA WATCHDOG
+    // ─────────────────────────────────────────────────────
+    // Every safety check runs when a camera frame arrives, so if frames stop
+    // (the browser paused the video, the camera froze) nothing would ever alarm.
+    // Once a second this checks that frames are still coming.
+    _startWatchdog() {
+        this._stopWatchdog();
+        this._lastFrameAt = performance.now();
+        this._stalled = false;
+        this._stallAlarmed = false;
+        this._watchdog = setInterval(() => this._checkCameraStall(), 1000);
+    },
+
+    _stopWatchdog() {
+        if (this._watchdog !== null) clearInterval(this._watchdog);
+        this._watchdog = null;
+        this._stalled = false;
+    },
+
+    /** No camera frame for STALL_MS: try to resume, tell the caregiver, and alarm if it lasts. */
+    _checkCameraStall() {
+        // A hidden page pauses frames too; that case is logged by _onVisibilityChange.
+        if (!this.isTracking || document.hidden || this._lastFrameAt === null) return;
+        const now = performance.now();
+        const stalledMs = now - this._lastFrameAt;
+        if (stalledMs < this.STALL_MS) return;
+        this._stalled = true;
+        if (this.dwell) this.dwell.noGaze(now);
+        const video = this.videoElement;
+        if (video && video.paused && typeof video.play === 'function') {
+            const playing = video.play();
+            if (playing && playing.catch) playing.catch(() => {});   // reported below if it does not come back
+        }
+        this._notice('Camera frames have stopped: eye monitoring is paused. Trying to resume…', 'error');
+        const settings = this._cachedSettings || LumiStore.getSettings();
+        const limitSec = settings.faceLostAlarmSec != null ? settings.faceLostAlarmSec : 10;
+        if (!this._stallAlarmed && stalledMs / 1000 >= limitSec) {
+            this._stallAlarmed = true;
+            this._triggerEmergency('CAMERA_STALLED',
+                `No camera frames for ${Math.round(stalledMs / 1000)}s — eye monitoring has stopped. Check the camera and this page.`);
+        }
+    },
 
     // ─────────────────────────────────────────────────────
     //  MAIN FRAME LOOP
@@ -368,6 +428,12 @@ const LumiGaze = {
     /** Handle one MediaPipe result: a face → the full pipeline; no face → no gaze this frame. */
     _onFrame(result) {
         const now = performance.now();
+        this._lastFrameAt = now;
+        if (this._stalled) {                    // frames are back
+            this._stalled = false;
+            this._stallAlarmed = false;
+            this._notice(null);
+        }
         this._checkSleepExpiry();
         const lm = result.faceLandmarks && result.faceLandmarks[0];
         const matrix = result.facialTransformationMatrixes && result.facialTransformationMatrixes[0];

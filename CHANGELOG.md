@@ -65,6 +65,25 @@ That attempt was replaced, because it could not run and would have misled:
 
 ### Fixed
 
+- **Blinking set off the full-screen alarm, and deliberate blinks did not select.**
+  - **Cause:** the eyes counted as open on any single frame above the eye-opening threshold. On
+    a real webcam the measurement is noisy, so one "open" frame in the middle of a blink split it
+    into several short blinks. Two attempts at a blink selection reached the rapid-blinking alarm
+    (6 blinks in 3 s): the siren and the red screen. The same noise restarted the 3-second
+    eyes-closed alarm.
+  - **Found by:** the author, using the app; the `RAPID_BLINKS` alert in the log.
+  - **Fix:** a closure ends only after the eyes have stayed open for 100 ms (about 3 frames). Its
+    length is still measured to the moment they first reopened. A blink selection now fires
+    about 0.1 s after the eyes open.
+- **The voice was a croaky novelty voice.** macOS lists "Albert", "Bad News", "Bells" and other
+  novelty voices as ordinary on-device English voices, alphabetically before Samantha, and the
+  first one was picked. Novelty and old robotic voices are now used only when nothing else speaks
+  the language; known clear voices (Samantha, Daniel, Rishi, Lekha, …) come first.
+- **The browser ran old code after a change.** The server sent no `Cache-Control`, so Chrome
+  guessed old copies of the scripts were still fresh, even on reload. App files are now sent
+  with `Cache-Control: no-cache` (an unchanged file is a cheap 304), and the service worker asks
+  the server even when the browser's cache holds a copy. **Press Cmd+Shift+R once** to drop the
+  copies cached before this fix.
 - **The camera stopped when its picture was scrolled out of view.**
   - **Cause:** the video was `autoplay muted`, and Chrome pauses such a video when it is not
     visible. Scrolling the dashboard's left column hid it.

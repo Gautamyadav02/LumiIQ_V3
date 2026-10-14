@@ -60,6 +60,8 @@ const LumiGaze = {
     blinkHistory: [],
     eyesClosedSince: null,
     _closureAlarmed: false,       // one PROLONGED_CLOSURE alarm per closure episode
+    _reopenedAt: null,            // eyes seen open during a closure, not yet confirmed (BLINK_REOPEN_MS)
+    BLINK_REOPEN_MS: 100,         // eyes must stay open this long (~3 frames) to end a closure: one noisy frame does not
     _rapidBlinkQuietUntil: 0,     // RAPID_BLINKS at most once per 15 s
     _lastFaceSeen: null,          // time of the last frame with a face (while tracking)
     _lastFrameAt: null,           // time of the last camera frame of any kind (while tracking)
@@ -675,6 +677,7 @@ const LumiGaze = {
         const blinkSelectOn = this._selectionMode(settings) !== 'dwell';
         const blinkSelectMs = settings.blinkSelectMs || 500;
         if (activeClosed) {
+            this._reopenedAt = null;      // a brief "open" reading was noise: the same closure goes on
             if (this.eyesClosedSince === null) {
                 this.eyesClosedSince = now;
                 // The target to select if this turns out to be a deliberate blink.
@@ -689,7 +692,14 @@ const LumiGaze = {
                 this._triggerEmergency('PROLONGED_CLOSURE', `Eyes closed for ${dur.toFixed(1)}s — Unresponsive alert`);
             }
         } else if (this.eyesClosedSince !== null) {
-            const d = now - this.eyesClosedSince;
+            if (this._reopenedAt === null) this._reopenedAt = now;
+            // Not yet confirmed: one noisy frame must not split a deliberate blink into
+            // several short ones, nor restart the eyes-closed alarm.
+            if (now - this._reopenedAt < this.BLINK_REOPEN_MS) {
+                this._updateSleepActivity(true, settings, now, sleeping);
+                return;
+            }
+            const d = this._reopenedAt - this.eyesClosedSince;   // closed until the eyes first reopened
             if (blinkSelectOn && d >= blinkSelectMs && d <= this.BLINK_SELECT_MAX_MS) {
                 this._blinkSelect(now);       // deliberate blink: select, don't count as a blink
             } else if (d > 50 && d < (blinkSelectOn ? Math.min(800, blinkSelectMs) : 800)) {
@@ -697,6 +707,7 @@ const LumiGaze = {
             }
             this._blinkCandidate = null;
             this.eyesClosedSince = null;
+            this._reopenedAt = null;
             this._closureAlarmed = false;
         }
         this._updateSleepActivity(!activeClosed, settings, now, sleeping);

@@ -8,32 +8,34 @@ const { setupEngine, feedFrames, EYES_OPEN, EYES_CLOSED } = require('./helpers/e
 
 const look = (ctx, ms) => feedFrames(ctx, ms, EYES_OPEN);
 const closeEyes = (ctx, ms) => feedFrames(ctx, ms, EYES_CLOSED);
+// The eyes must stay open for the engine's BLINK_REOPEN_MS (100 ms) before a closure counts as over.
+const REOPEN = 150;
 
 test('a deliberate blink while looking at a key selects it', () => {
   const ctx = setupEngine();                  // default mode: dwell or blink
   look(ctx, 400);                             // gaze settles; far too short for a dwell click
   assert.equal(ctx.fired.length, 0);
   closeEyes(ctx, 700);
-  look(ctx, 33);                              // eyes reopen
+  look(ctx, REOPEN);                              // eyes reopen
   assert.equal(ctx.fired.length, 1);
   assert.equal(ctx.fired[0].el, ctx.key);
 });
 
 test('a normal short blink does not select', () => {
   const ctx = setupEngine();
-  look(ctx, 400); closeEyes(ctx, 200); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 200); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0);
 });
 
 test('a long eye closure (2 s) is not a selection', () => {
   const ctx = setupEngine();
-  look(ctx, 400); closeEyes(ctx, 2000); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 2000); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0);
 });
 
 test('blinking twice types the key twice (double letters)', () => {
   const ctx = setupEngine();
-  look(ctx, 400); closeEyes(ctx, 700); look(ctx, 300); closeEyes(ctx, 700); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 700); look(ctx, 300); closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 2);
 });
 
@@ -45,7 +47,7 @@ test('after a blink selection, continuing to look does not also dwell-click the 
 
 test('a blink only selects a key the gaze had settled on, not one it was passing', () => {
   const ctx = setupEngine();
-  look(ctx, 100); closeEyes(ctx, 700); look(ctx, 33);
+  look(ctx, 100); closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0);
 });
 
@@ -56,13 +58,13 @@ test('the cursor jump while the eyelids close does not lose the key', () => {
   ctx.env.hit = () => null;                   // lids closing drag the estimate off the key
   look(ctx, 66);
   ctx.env.hit = onKey;
-  closeEyes(ctx, 700); look(ctx, 33);
+  closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 1);
 });
 
 test('"Dwell only": a deliberate blink does nothing', () => {
   const ctx = setupEngine({ settings: { selectionMode: 'dwell' } });
-  look(ctx, 400); closeEyes(ctx, 700); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0);
 });
 
@@ -71,21 +73,21 @@ test('"Blink only": a steady gaze never clicks (the ring shows it is armed); a b
   look(ctx, 5000);
   assert.equal(ctx.fired.length, 0);
   assert.equal(ctx.progress.at(-1).p, 1, 'ring full: blink to select');
-  closeEyes(ctx, 700); look(ctx, 33);
+  closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 1);
 });
 
 test('the required eyes-closed time follows the setting', () => {
   const ctx = setupEngine({ settings: { blinkSelectMs: 900 } });
-  look(ctx, 400); closeEyes(ctx, 700); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0, '700 ms is shorter than the 900 ms setting');
-  look(ctx, 400); closeEyes(ctx, 1000); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 1000); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 1);
 });
 
 test('no blink selection before a calibration is accepted', () => {
   const ctx = setupEngine({ calibrated: false });
-  look(ctx, 400); closeEyes(ctx, 700); look(ctx, 33);
+  look(ctx, 400); closeEyes(ctx, 700); look(ctx, REOPEN);
   assert.equal(ctx.fired.length, 0);
 });
 

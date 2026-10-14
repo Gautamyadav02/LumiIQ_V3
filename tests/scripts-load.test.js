@@ -17,7 +17,7 @@ test('index.html loads the scripts this test expects, in this order', () => {
   assert.deepEqual(scriptsFromIndexHtml(), [
     'database.js', 'dictionary.js', 'voice.js',
     'gaze/one-euro-filter.js', 'gaze/ridge-regression.js', 'gaze/gaze-stabilizer.js',
-    'gaze/dwell-controller.js', 'gaze/gaze-calibration.js', 'gaze/drift-detector.js',
+    'gaze/dwell-controller.js', 'gaze/gaze-calibration.js', 'gaze/drift-detector.js', 'gaze/gaze-features.js',
     'gaze-engine.js', 'keyboard.js', 'body-map.js', 'phrases.js', 'diagnostics.js',
     'eval/metrics.js', 'eval/session-recorder.js', 'eval/eval-wizard.js', 'app.js',
   ]);
@@ -27,7 +27,7 @@ test('every script loads in order and defines its global', () => {
   const env = createEnv();
   env.load(...scriptsFromIndexHtml());
   const globals = ['LumiStore', 'LumiDictionary', 'LumiVoice', 'OneEuroFilter', 'RidgeRegressor',
-    'GazeStabilizer', 'DwellController', 'GazeCalibration', 'DriftDetector', 'LumiGaze',
+    'GazeStabilizer', 'DwellController', 'GazeCalibration', 'DriftDetector', 'GazeFeatures', 'LumiGaze',
     'LumiKeyboard', 'LumiBodyMap', 'LumiPhrases', 'LumiDiagnostics',
     'LumiMetrics', 'LumiSessionRecorder', 'LumiEvalWizard', 'EyeApp'];
   for (const name of globals) {

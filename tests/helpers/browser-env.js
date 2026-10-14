@@ -224,6 +224,7 @@ const GAZE_MODULES = [
   'gaze/dwell-controller.js',
   'gaze/gaze-calibration.js',
   'gaze/drift-detector.js',
+  'gaze/gaze-features.js',
 ];
 
 module.exports = { createEnv, FakeClock, GAZE_MODULES, ROOT };

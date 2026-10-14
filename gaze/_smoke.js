@@ -32,6 +32,7 @@ load('gaze/ridge-regression.js');
 load('gaze/gaze-stabilizer.js');
 load('gaze/dwell-controller.js');
 load('gaze/gaze-calibration.js');
+load('gaze/gaze-features.js');
 load('gaze-engine.js');
 load('app.js');
 

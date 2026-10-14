@@ -6,7 +6,7 @@
 // (The previous cache-first handler never revalidated, so after a code change
 // browsers kept running the old JavaScript — AUDIT M12.) API requests are
 // never cached. Bump CACHE_NAME when the ASSETS list changes.
-const CACHE_NAME = 'lumiiq-v6';
+const CACHE_NAME = 'lumiiq-v7';
 const ASSETS = [
     '/',
     '/index.html',
@@ -29,6 +29,7 @@ const ASSETS = [
     '/gaze/dwell-controller.js',
     '/gaze/gaze-calibration.js',
     '/gaze/drift-detector.js',
+    '/gaze/gaze-features.js',
     '/lib/mediapipe/vision_bundle.mjs',
     // MediaPipe's WebAssembly runtime (SIMD build; the no-SIMD fallback is
     // cached the first time a browser that needs it fetches it).

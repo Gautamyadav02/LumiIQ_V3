@@ -37,6 +37,9 @@ That attempt was replaced, because it could not run and would have misled:
 - **Session recording** (`eval/session-recorder.js`).
   - **Numbers only:** per frame, 16 landmarks, the head matrix, features, predictions and
     timestamps. Never video or images.
+  - **Also per session:** the camera picture's size in pixels (its aspect ratio is needed to
+    turn normalised landmarks back into true proportions), and the time each calibration point
+    was committed.
   - **Checked twice:** the recorder and the server both reject long or image-like text.
   - **Storage:** one JSON file per session in the gitignored `eval/sessions/`.
 - **`POST /api/eval/session`**: saves a session through the local server.

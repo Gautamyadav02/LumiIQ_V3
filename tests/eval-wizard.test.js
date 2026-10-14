@@ -147,7 +147,13 @@ test('a complete run: all ten stages in order, saved as one valid session (synth
     assert.equal(c.report.cvMethod, 'loto');
     assert.equal(c.model.version, 3);
     assert.ok(c.targets.every((t) => t.frames.length >= 12 && t.frames.length === t.samples));
+    // When each point was committed (= when the next target appeared), for replaying a settle guard.
+    const times = c.targets.map((t) => t.t);
+    assert.ok(times.every((t, i) => typeof t === 'number' && t > (i ? times[i - 1] : c.t0) && t <= c.t1), `${c.name}: commit times in order`);
+    assert.ok(c.targets.every((t) => t.frames.every((f) => s.frames[f][0] <= t.t)), 'a point\'s frames come before its commit');
   }
+  // The camera picture's size: landmarks are normalised by it, so the replay needs its aspect ratio.
+  assert.deepEqual(s.camera, { width: 1280, height: 720 });
 
   // Targets: 12 held-out after each calibration, 4 after each of the 6 head positions.
   const count = (f) => s.targets.filter(f).length;

@@ -98,6 +98,7 @@ function setupWizard({ plan, settings = {}, person = {}, fetch } = {}) {
   const gaze = env.get('LumiGaze');
   gaze._buildSubsystems();
   gaze.isTracking = true;
+  gaze.videoElement = { videoWidth: 1280, videoHeight: 720 };   // the camera picture's size in pixels
   const original = {
     onDwellClick: (target) => { target.click(); },      // what app.js does with a selection
     onCalibrationComplete: () => { original.appSawCalibration = true; },

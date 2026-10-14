@@ -301,7 +301,8 @@ Start an evaluation session** runs a guided session of about 10 minutes and save
 | 10 Calibration again | 16 points, then the same 12 targets |
 
 - **What is recorded:** numbers only. Per frame: 16 landmark positions, the head matrix, the
-  features, the predictions and timestamps. Never video or images.
+  features, the predictions and timestamps. Per session: the camera picture's size in pixels,
+  and when each calibration point was committed. Never video or images.
 - **Where:** `eval/sessions/<id>.json`, on this computer, excluded from git. A session is 4–8 MB.
 - **Stopping** at any point saves nothing. Safety alarms stay on throughout.
 - **`node eval/replay.js`** re-runs a recorded session through the app's own gaze code and reports

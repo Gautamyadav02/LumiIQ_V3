@@ -462,9 +462,16 @@
         settings: { ...this.store.getSettings() },
         settingsBefore: this.settingsBefore,
         flags: typeof this.gaze.evalFlags === 'function' ? this.gaze.evalFlags() : {},
+        camera: this._cameraSize(),
       });
       this._hook();
       this._advance();
+    }
+
+    /** The camera picture's size in pixels, or null if it is not known yet. */
+    _cameraSize() {
+      const v = this.gaze.videoElement;
+      return v && v.videoWidth > 0 && v.videoHeight > 0 ? { width: v.videoWidth, height: v.videoHeight } : null;
     }
 
     _restorePreviousSettings() {

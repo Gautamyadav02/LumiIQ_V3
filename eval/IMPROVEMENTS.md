@@ -2,7 +2,7 @@
 
 Written by `npm run eval:ablation` from the sessions in `eval/sessions/`. Do not edit by hand: run the command again.
 
-*Generated 2026-10-14T09:40:26.881Z · code: commit 585eb8b on phase-c-gaze, with uncommitted changes*
+*Generated 2026-10-14T09:43:52.485Z · code: commit 47c5d32 on phase-c-gaze, with uncommitted changes*
 
 **How to read this**
 - Every row replays the **same recorded sessions** through the app's own gaze code (`eval/replay.js`) with some

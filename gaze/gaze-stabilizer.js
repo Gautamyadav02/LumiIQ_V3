@@ -84,6 +84,20 @@
     }
   }
 
+  /**
+   * The "smoothing" setting (0.05 least … 0.45 most) as One Euro parameters.
+   * Lower minCutoff = smoother at rest. Used by the engine every frame and by
+   * the offline replay, so both smooth identically.
+   */
+  GazeStabilizer.paramsFor = function (smoothingFactor) {
+    const f = Math.min(0.45, Math.max(0.05, smoothingFactor != null ? smoothingFactor : 0.35));
+    return {
+      minCutoff: 3.5 - f * 4.0,     // 0.05→3.3Hz (τ≈48ms) … 0.45→1.7Hz (τ≈94ms)
+      beta: 0.04 - f * 0.05,         // higher beta for aggressive saccade tracking
+      deadband: 2.5,
+    };
+  };
+
   root.GazeStabilizer = GazeStabilizer;
   if (typeof module !== 'undefined' && module.exports) module.exports = { GazeStabilizer };
 })(typeof window !== 'undefined' ? window : globalThis);

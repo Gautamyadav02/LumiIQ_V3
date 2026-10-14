@@ -289,15 +289,18 @@
     };
   }
 
-  /** The app's own estimate for a calibration (its quality report), per axis in px and degrees. */
+  /** A calibration quality report as an estimate per axis, in px and degrees. */
+  function inAppFromReport(report, points, geom) {
+    if (!report || !report.ok) return null;
+    const or = (v) => (v != null ? v : null);
+    return { method: report.cvMethod || null, rating: report.rating || null, points,
+             x: both(or(report.rmseXPx), geom), y: both(or(report.rmseYPx), geom), combined: both(or(report.accuracyPx), geom) };
+  }
+
+  /** The app's own estimate for a calibration, as recorded in the session. */
   function inAppEstimate(session, name) {
-    const geom = sessionGeometry(session);
     const cal = (session.calibrations || []).filter((c) => c.name === name && c.report && c.report.ok).pop();
-    if (!cal) return null;
-    const rep = cal.report;
-    return { method: rep.cvMethod || null, rating: rep.rating || null, points: cal.points,
-             x: both(rep.rmseXPx != null ? rep.rmseXPx : null, geom), y: both(rep.rmseYPx != null ? rep.rmseYPx : null, geom),
-             combined: both(rep.accuracyPx != null ? rep.accuracyPx : null, geom) };
+    return cal ? inAppFromReport(cal.report, cal.points, sessionGeometry(session)) : null;
   }
 
   /**
@@ -346,7 +349,8 @@
     accuracy, precision, p95,
     wrongSelections, missedSelections, timePerCorrectSelection, selectionSummary, falseActivationsPerMin,
     settlingTime, fixationJitter,
-    WINDOWS, recordedGaze, sessionGeometry, targetSamples, validationSummary, lagSummary, inAppEstimate, analyseSession,
+    WINDOWS, recordedGaze, sessionGeometry, targetSamples, validationSummary, lagSummary,
+    inAppFromReport, inAppEstimate, analyseSession,
   };
   root.LumiMetrics = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

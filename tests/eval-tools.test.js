@@ -227,6 +227,10 @@ test('recorder: a session has an id, the setup, the screen and the settings befo
   assert.deepEqual(s.settings, START.settings);
   assert.deepEqual(s.settingsBefore, START.settingsBefore);
   assert.deepEqual(s.engine.landmarkIndices, F.RECORD_INDICES);
+  assert.equal(s.synthetic, false, 'a recorded session is not marked synthetic');
+  const { rec: generator } = recorder();
+  generator.start({ ...START, synthetic: true });
+  assert.equal(generator.finish().synthetic, true);
 });
 
 test('recorder: each frame is one compact row of numbers, with landmarks and head matrix alongside', () => {
@@ -245,11 +249,11 @@ test('recorder: each frame is one compact row of numbers, with landmarks and hea
   assert.equal(a.conf, 0.8765);
   assert.equal(a.earR, 0.25123);
   assert.equal(a.yaw, 1.235);
-  assert.equal(a.f0, 0.512346);
+  assert.equal(a.f0, 0.51234568);
   assert.deepEqual([a.predX, a.predY, a.gazeX, a.gazeY], [700.12, 450.99, 702.5, 449.25]);
   assert.equal(s.landmarks[0].length, F.RECORD_INDICES.length * 3);
-  assert.equal(s.landmarks[0][3], 0.312346);       // rounded to 6 decimals
-  assert.equal(s.matrices[0][14], -60.12346);
+  assert.equal(s.landmarks[0][3], 0.3123457);      // rounded to 7 decimals
+  assert.equal(s.matrices[0][14], -60.1234568);
   const b = row(s, 1);
   assert.equal(s.enums.reason[b.reason], 'no_face');
   assert.equal(b.face, 0);
@@ -480,4 +484,149 @@ test('analysis: the whole session in one call, from the recorded gaze or from a 
   // The same analysis on another gaze track (what the replay produces): 50 px off instead of 20.
   const replayed = s.frames.map(() => ({ x: 550, y: 500 }));
   assert.ok(near(M.analyseSession(s, { gaze: replayed }).validation.val9.standard.accuracy.px, 50));
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  Offline replay (eval/replay.js)
+// ════════════════════════════════════════════════════════════════════
+// The sessions replayed here come from the real wizard driven by a simulated
+// person (tests/helpers/wizard.js): every number is SYNTHETIC.
+const { spawnSync } = require('child_process');
+const Replay = require('../eval/replay.js');
+const { setupWizard } = require('./helpers/wizard');
+const { GazeCalibration } = require('../gaze/gaze-calibration.js');
+
+const QUICK_PLAN = { REST_MS: 6000, FIXATION_MS: 3000 };
+const made = {};
+/** One simulated session per kind, recorded once and reused. */
+async function simulated(kind = 'normal') {
+  if (!made[kind]) {
+    const w = setupWizard({ plan: QUICK_PLAN, person: { seed: kind === 'second' ? 5 : 1, rest: kind === 'stare' ? 'stare' : 'idle' } });
+    assert.equal(w.runUntil('summary'), true);
+    await w.flush();
+    made[kind] = w.uploads[0].session;
+  }
+  return JSON.parse(JSON.stringify(made[kind]));
+}
+
+const replayed = {};
+/** The replay of a simulated session with the recorded options, computed once. */
+async function defaultReplay(kind = 'normal') {
+  if (!replayed[kind]) replayed[kind] = Replay.replaySession(await simulated(kind));
+  return replayed[kind];
+}
+
+test('replay: with the recorded options it reproduces the gaze the live app showed', async () => {
+  const s = await simulated();
+  const r = await defaultReplay();
+  assert.equal(r.id, s.id);
+  assert.ok(r.checks.gazeFrames > 1000, `${r.checks.gazeFrames} calibrated frames were compared`);
+  assert.ok(r.checks.rawMaxDiffPx < 0.01, `the model's output is reproduced to ${r.checks.rawMaxDiffPx} px`);
+  assert.ok(r.checks.gazeMeanDiffPx < 0.01, `the smoothed gaze differs by ${r.checks.gazeMeanDiffPx} px on average`);
+  // The smoother holds the cursor still inside a 2.5 px deadband, so a difference of a
+  // thousandth of a pixel can occasionally tip one frame over that threshold.
+  assert.ok(r.checks.gazeMaxDiffPx < 2.5, `and by at most ${r.checks.gazeMaxDiffPx} px`);
+  const live = s.summary.validation.val9.standard.accuracy.px;
+  assert.ok(Math.abs(r.analysis.validation.val9.standard.accuracy.px - live) < 0.5);
+  assert.ok(Math.abs(r.analysis.validation.val16.standard.accuracy.px - s.summary.validation.val16.standard.accuracy.px) < 0.5);
+});
+
+test('replay: the features are recomputed from the recorded landmarks by the real module, and match', async () => {
+  const s = await simulated();
+  const r = Replay.replaySession(s, { recompute: true });
+  assert.ok(r.checks.featureFrames > 1000);
+  assert.ok(r.checks.featureMaxDiff < 1e-4, `largest difference ${r.checks.featureMaxDiff}`);
+  assert.ok(r.checks.rawMaxDiffPx < 0.5, `predictions from recomputed features differ by at most ${r.checks.rawMaxDiffPx} px`);
+});
+
+test('replay: each calibration is re-fitted from its own frames by the real calibration module', async () => {
+  const s = await simulated();
+  const r = await defaultReplay();
+  for (const name of ['cal9', 'cal16']) {
+    const recorded = s.calibrations.find((c) => c.name === name);
+    const refit = r.calibrations[name];
+    assert.equal(refit.report.ok, true);
+    assert.equal(refit.report.samples, recorded.report.samples, `${name}: the same number of clean samples`);
+    assert.equal(refit.report.cvMethod, 'loto');
+    assert.deepEqual([refit.report.lambdaX, refit.report.lambdaY], [recorded.report.lambdaX, recorded.report.lambdaY]);
+    assert.ok(Math.abs(refit.report.accuracyPx - recorded.report.accuracyPx) <= 1, `${name}: the same in-app estimate`);
+    // And the re-fitted model predicts what the stored model predicts.
+    const stored = GazeCalibration.fromJSON(recorded.model);
+    const f = [0.44, 0.53, 0.44, 0.53, 0, 0, 0, 0.3, 0.26, 0.2];
+    const a = refit.model.predict(f), b = stored.predict(f);
+    assert.ok(Math.abs(a.x - b.x) < 1e-3 && Math.abs(a.y - b.y) < 1e-3);
+  }
+});
+
+test('replay: M1 — the old and the new in-app estimate, each next to the held-out error', async () => {
+  const m1 = (await defaultReplay()).m1.cal9;
+  for (const method of ['loto', 'interleaved']) {
+    assert.ok(m1[method].inApp.x.px > 0 && m1[method].inApp.y.px > 0, `${method}: an in-app estimate per axis`);
+    assert.ok(m1[method].heldOut.x.px > 0 && m1[method].heldOut.y.px > 0, `${method}: the held-out error per axis`);
+    assert.ok(m1[method].inApp.x.deg > 0);
+  }
+  assert.ok(m1.loto.inApp.x.px >= m1.interleaved.inApp.x.px, 'leave-one-target-out is never the more optimistic estimate');
+});
+
+test('replay: options are applied — polynomial degree, cross-validation, smoothing', async () => {
+  const s = await simulated();
+  const base = await defaultReplay();
+  const linear = Replay.replaySession(s, { degree: 1 });
+  assert.equal(linear.calibrations.cal9.model.modelX.weights.length, 11, 'degree 1: 10 features + intercept');
+  assert.equal(base.calibrations.cal9.model.modelX.weights.length, 66, 'degree 2: 65 terms + intercept');
+  assert.equal(linear.options.degree, 1);
+  assert.ok(linear.analysis.validation.val9.standard.accuracy.px > 0);
+  const old = Replay.replaySession(s, { cv: 'interleaved' });
+  assert.equal(old.calibrations.cal9.report.cvMethod, 'interleaved');
+  // Heavier smoothing everywhere changes the lag figures of the phases recorded with light smoothing.
+  const heavy = Replay.replaySession(s, { smoothing: 0.45 });
+  assert.notEqual(heavy.analysis.lag['0.06'].settlingMs, base.analysis.lag['0.06'].settlingMs);
+  assert.ok(heavy.analysis.lag['0.06'].jitter.px <= base.analysis.lag['0.06'].jitter.px);
+});
+
+test('replay: dwell is re-run on the recorded key layout for the rest period', async () => {
+  const idle = await defaultReplay();
+  assert.equal(idle.rest.live, 0);
+  assert.equal(idle.rest.replayedDwell, 0);
+  const stare = await defaultReplay('stare');
+  assert.ok(stare.rest.live >= 1, 'the simulated person stared at a key during the rest');
+  assert.equal(stare.rest.replayedDwell, stare.rest.live, 'the real dwell controller fires the same number of times on replay');
+  assert.equal(stare.rest.labels[0], 'G');
+});
+
+test('replay: a session without consent, or of another format, is refused', async () => {
+  const s = await simulated();
+  assert.throws(() => Replay.replaySession({ ...s, consent: { given: false } }), /consent/);
+  assert.throws(() => Replay.replaySession({ ...s, version: 1 }), /version/);
+  assert.throws(() => Replay.replaySession({ metadata: {}, frames: [] }), /format/);
+});
+
+test('replay: results are combined across sessions as mean ± SD with n', async () => {
+  const results = [await defaultReplay(), await defaultReplay('second')];
+  const agg = Replay.aggregate(results, (r) => r.analysis.validation.val9.standard.accuracy.x.px);
+  const [a, b] = results.map((r) => r.analysis.validation.val9.standard.accuracy.x.px);
+  assert.equal(agg.n, 2);
+  assert.ok(near(agg.mean, (a + b) / 2));
+  assert.ok(near(agg.sd, Math.abs(a - b) / Math.SQRT2));
+  assert.deepEqual(agg.ids, results.map((r) => r.id));
+  const none = Replay.aggregate(results, () => null);
+  assert.deepEqual({ n: none.n, mean: none.mean, ids: none.ids }, { n: 0, mean: null, ids: [] });
+});
+
+test('replay: the command line replays the sessions in a folder', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumiiq-replay-'));
+  try {
+    const s = await simulated();
+    SessionRecorder.writeToDir(s, dir);
+    SessionRecorder.writeToDir({ ...s, id: s.id + '-syn', synthetic: true }, dir);
+    const run = spawnSync(process.execPath, [path.join(__dirname, '..', 'eval', 'replay.js'), dir, '--degree', '1'], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, new RegExp(`${s.id} \\[replayed real\\]`));
+    assert.match(run.stdout, new RegExp(`${s.id}-syn \\[synthetic\\]`), 'a generated session is never labelled real');
+    assert.match(run.stdout, /degree 1/);
+    const empty = spawnSync(process.execPath, [path.join(__dirname, '..', 'eval', 'replay.js'), path.join(dir, 'nothing-here')], { encoding: 'utf8' });
+    assert.match(empty.stdout + empty.stderr, /no session/i);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

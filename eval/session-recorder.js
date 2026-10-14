@@ -64,7 +64,7 @@
      * Begin a session. Throws unless consent is exactly `true`.
      * @param {{consent:boolean, setup:object, screen:object, settings:object, settingsBefore?:object, flags?:object}} o
      */
-    start({ consent, setup, screen, settings, settingsBefore, flags } = {}) {
+    start({ consent, setup, screen, settings, settingsBefore, flags, synthetic } = {}) {
       if (consent !== true) throw new Error('Recording needs the participant\'s explicit consent.');
       const at = this._wallNow();
       const stamp = at.toISOString().replace(/[:.]/g, '-').slice(0, 19) + 'Z';
@@ -74,6 +74,8 @@
         id: `${stamp}-${suffix}`,
         createdAt: at.toISOString(), finishedAt: null,
         consent: { given: true, at: at.toISOString() },
+        // true only for generated sessions (tests, pipeline checks). Reports never count those as results.
+        synthetic: synthetic === true,
         setup: copy(setup) || {},
         screen: copy(screen) || {},
         engine: { featureDim: Features.FEATURE_DIM, landmarkIndices: Features.RECORD_INDICES.slice(), flags: copy(flags) || {} },
@@ -107,13 +109,15 @@
         r(info.t, 2), flag(info.face), REASONS.indexOf(info.reason), EYE_MODES.indexOf(info.eyeMode || 'none'), r(info.confidence, 4),
         r(R.ear, 5), r(L.ear, 5), flag(R.open), flag(L.open), flag(R.used), flag(L.used),
         r(pose.yaw, 3), r(pose.pitch, 3), r(pose.roll, 3),
-        r(f[0], 6), r(f[1], 6), r(f[2], 6), r(f[3], 6), r(f[4], 6), r(f[5], 6), r(f[6], 6), r(f[7], 6), r(f[8], 6), r(f[9], 6),
+        // Features, landmarks and the head matrix keep enough decimals for a replay to
+        // reproduce the live prediction to about a thousandth of a pixel.
+        r(f[0], 8), r(f[1], 8), r(f[2], 8), r(f[3], 8), r(f[4], 8), r(f[5], 8), r(f[6], 8), r(f[7], 8), r(f[8], 8), r(f[9], 8),
         r(info.pred && info.pred.x, 2), r(info.pred && info.pred.y, 2),
         r(info.gaze && info.gaze.x, 2), r(info.gaze && info.gaze.y, 2),
         flag(info.calSample),
       ]);
-      s.landmarks.push(Array.isArray(info.lm) ? info.lm.map((v) => r(v, 6)) : null);
-      s.matrices.push(Array.isArray(info.matrix) ? info.matrix.map((v) => r(v, 5)) : null);
+      s.landmarks.push(Array.isArray(info.lm) ? info.lm.map((v) => r(v, 7)) : null);
+      s.matrices.push(Array.isArray(info.matrix) ? info.matrix.map((v) => r(v, 7)) : null);
       if (info.calSample && this._cal) this._calFrames.push(index);
       return true;
     }

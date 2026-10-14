@@ -172,3 +172,87 @@ test('C5: degree 1 uses a lambda grid of its own', () => {
   assert.ok(Math.max(...RMath.lambdaGrid(1)) < Math.max(...RMath.lambdaGrid(2)), 'fewer weights need less shrinking');
   assert.equal(calibrate({ degree: 1 }).report.ok, true);
 });
+
+// ── C6: confidence-weighted smoothing ───────────────────────────────
+const { GazeStabilizer } = require('../gaze/gaze-stabilizer.js');
+
+/** The first output after a small jump (the size of landmark noise), at a given confidence. */
+function stepResponse(opts, confidence, step = 8) {
+  const s = new GazeStabilizer({ width: 1440, height: 900, ...GazeStabilizer.paramsFor(0.35), ...opts });
+  let t = 0;
+  for (let i = 0; i < 15; i++) s.process(500, 400, (t += 33), confidence);
+  return s.process(500 + step, 400, (t += 33), confidence).x - 500;
+}
+
+test('C6: low-confidence frames are smoothed more (a smaller response to the same jump)', () => {
+  const sure = stepResponse({ confidenceWeighting: true }, 1.0);
+  const unsure = stepResponse({ confidenceWeighting: true }, 0.3);
+  assert.ok(sure > 0, `confident frame moves ${sure.toFixed(2)} px`);
+  assert.ok(unsure < sure * 0.75, `unsure frame moves ${unsure.toFixed(2)} px, confident ${sure.toFixed(2)} px`);
+});
+
+test('C6: at full confidence, or switched off, the smoothing is exactly Phase B', () => {
+  assert.equal(stepResponse({ confidenceWeighting: true }, 1.0), stepResponse({}, 1.0));
+  assert.equal(stepResponse({}, 0.3), stepResponse({}, 1.0), 'switched off, confidence is ignored');
+});
+
+test('C6: the weighting never compounds: the filter returns to normal when confidence recovers', () => {
+  const s = new GazeStabilizer({ width: 1440, height: 900, ...GazeStabilizer.paramsFor(0.35), confidenceWeighting: true });
+  const base = GazeStabilizer.paramsFor(0.35).minCutoff;
+  let t = 0;
+  for (let i = 0; i < 50; i++) s.process(500, 400, (t += 33), 0.3);
+  assert.ok(Math.abs(s.euro.fx.minCutoff - base * 0.3) < 1e-12, 'scaled once, not 50 times');
+  s.process(500, 400, (t += 33), 1.0);
+  assert.equal(s.euro.fx.minCutoff, base);
+  s.setParams(GazeStabilizer.paramsFor(0.06));
+  s.process(500, 400, (t += 33), 0.5);
+  assert.ok(Math.abs(s.euro.fx.minCutoff - GazeStabilizer.paramsFor(0.06).minCutoff * 0.5) < 1e-12, 'and follows a new setting');
+});
+
+// ── C7: drift detector ──────────────────────────────────────────────
+const { DriftDetector } = require('../gaze/drift-detector.js');
+
+const KEY = { x: 600, y: 400 }, KEY_SIZE = { width: 132, height: 148 };
+/** Dwells whose gaze point sits (dx, dy) px from the key centre, plus a little scatter. */
+function dwells(detector, n, dx, dy, seed = 1) {
+  const rand = rng(seed);
+  const flags = [];
+  for (let i = 0; i < n; i++) {
+    flags.push(detector.onDwellActivate({ x: KEY.x + dx + rand() * 12, y: KEY.y + dy + rand() * 12 }, KEY, KEY_SIZE));
+  }
+  return flags;
+}
+
+test('C7: six dwells in a row off to the same side ask for recalibration', () => {
+  const d = new DriftDetector({ mode: 'bias' });
+  const flags = dwells(d, 6, 40, 0);                   // the estimate sits 40 px right of where the keys are
+  assert.deepEqual(flags.slice(0, 5), [false, false, false, false, false]);
+  assert.equal(flags[5], true);
+  assert.equal(d.last.reason, 'consistent-x');
+  assert.ok(d.last.biasX > 0.2);
+});
+
+test('C7: also downwards, and after a run of accurate dwells (the case audit M10 found missed)', () => {
+  const d = new DriftDetector({ mode: 'bias' });
+  assert.ok(!dwells(d, 20, 0, 0, 3).some(Boolean), 'accurate dwells, scattered around the centre: no warning');
+  const later = dwells(d, 10, 0, 35, 4);               // then it drifts downwards
+  assert.ok(later.some(Boolean), 'flagged within 10 dwells');
+  assert.ok(later.indexOf(true) <= 5);
+  const legacy = new DriftDetector();                  // the Phase B detector
+  dwells(legacy, 20, 0, 0, 3);
+  assert.ok(!dwells(legacy, 10, 0, 35, 4).some(Boolean), 'the Phase B rule misses it');
+});
+
+test('C7: a warning is given once, then the detector starts over', () => {
+  const d = new DriftDetector({ mode: 'bias' });
+  const flags = dwells(d, 12, -40, 0);
+  assert.deepEqual(flags.map((f, i) => (f ? i : null)).filter((i) => i !== null), [5, 11]);
+  d.reset();
+  assert.equal(dwells(d, 3, -40, 0).some(Boolean), false);
+});
+
+test('C7: switched off, the detector is the Phase B one', () => {
+  const a = new DriftDetector(), b = new DriftDetector({ mode: 'legacy' });
+  const point = { x: 670, y: 400 };
+  for (let i = 0; i < 15; i++) assert.equal(a.onDwellActivate(point, KEY, KEY_SIZE), b.onDwellActivate(point, KEY, KEY_SIZE));
+});

@@ -13,6 +13,10 @@
         dCutoff: opts.dCutoff != null ? opts.dCutoff : 1.0,
       });
       this.deadband = opts.deadband != null ? opts.deadband : 3.0; // px
+      // Phase C (C6): smooth low-confidence frames more, by lowering the filter's
+      // minimum cutoff in proportion to confidence (never below 0.3 of it).
+      this.confidenceWeighting = opts.confidenceWeighting === true;
+      this.baseMinCutoff = this.euro.fx.minCutoff;
       this.width = opts.width || (typeof window !== 'undefined' ? window.innerWidth : 1920);
       this.height = opts.height || (typeof window !== 'undefined' ? window.innerHeight : 1080);
 
@@ -31,16 +35,26 @@
 
     setParams(opts = {}) {
       this.euro.setParams(opts);
+      if (opts.minCutoff != null) this.baseMinCutoff = opts.minCutoff;
       if (opts.deadband != null) this.deadband = opts.deadband;
+      if (opts.confidenceWeighting != null) this.confidenceWeighting = opts.confidenceWeighting;
     }
 
     /**
      * @param {number} x  Raw predicted x (px)
      * @param {number} y  Raw predicted y (px)
      * @param {number} t  Timestamp (ms)
+     * @param {number} [confidence=1]  0..1; used only with confidenceWeighting (C6)
      * @returns {{x:number,y:number}} Stabilized cursor position (px).
      */
-    process(x, y, t) {
+    process(x, y, t, confidence = 1) {
+      if (this.confidenceWeighting) {
+        // Set from the base value every frame, so the scaling never compounds.
+        const c = confidence == null || !Number.isFinite(confidence) ? 1 : Math.min(1, confidence);
+        const cutoff = this.baseMinCutoff * Math.max(0.3, c);
+        this.euro.fx.minCutoff = cutoff;
+        this.euro.fy.minCutoff = cutoff;
+      }
       const f = this.euro.filter(x, y, t);
 
       // Track instantaneous speed (for diagnostics / adaptive dwell).

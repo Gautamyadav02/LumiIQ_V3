@@ -1,167 +1,185 @@
 /**
- * LumiIQ — Evaluation Metrics (Phase B)
+ * LumiIQ — evaluation metrics (Phase B)
  *
- * Implements objective gaze tracking performance metrics:
- * - Accuracy: mean offset from target (pixels and degrees of visual angle)
- * - Precision: RMS spread of gaze around its own centroid during fixation
- * - 95th-percentile error: worst-case boundary (px and degrees)
- * - Selection metrics: correct, wrong, missed selections, mean time per selection
- * - False activations per minute (during rest period)
- * - Settling time: latency from target appearance to eye landing on target
- * - Visual angle conversion (px -> degrees) given geometry
+ * Pure functions that turn recorded gaze samples and selection events into the
+ * figures the evaluation reports. They run in the browser (the wizard's summary)
+ * and under Node (eval/replay.js, eval/report.js).
+ *
+ * Rules these functions keep:
+ *   • No data means no number. An empty input gives null, never 0.
+ *   • Nothing is rounded here. Rounding is for display only.
+ *   • Lengths come in pixels and, when the viewing geometry is known, in
+ *     degrees of visual angle. Without the geometry, degrees are null.
+ *
+ * Definitions (for one fixation on one target):
+ *   accuracy   mean distance of the gaze samples from the target
+ *              (x and y: mean absolute offset on that axis; bias: signed mean)
+ *   precision  RMS distance of the samples from their own mean
+ *              (x and y: standard deviation on that axis)
+ *   p95        the 95th percentile of the distance from the target
  */
 (function (root) {
   'use strict';
 
+  // ── Geometry ───────────────────────────────────────────────────────
+
   /**
-   * Convert pixel distance to degrees of visual angle.
-   * @param {number} pxDist       Distance in screen pixels
-   * @param {number} screenWidthMm Screen width in mm (e.g. 344 for 15.6" laptop)
-   * @param {number} screenWidthPx Screen width in pixels (e.g. 1920 or 1440)
-   * @param {number} distanceMm    Viewing distance in mm (e.g. 500 or 600)
-   * @returns {number} Degrees of visual angle
+   * The viewing geometry needed for degrees, or null if any part is missing.
+   * @param {{distanceCm:number, screenWidthCm:number, screenWidthPx:number}} g
    */
-  function pxToDegrees(pxDist, screenWidthMm, screenWidthPx, distanceMm) {
-    if (!pxDist || pxDist <= 0 || !screenWidthMm || !screenWidthPx || !distanceMm) return 0;
-    const sizeMm = pxDist * (screenWidthMm / screenWidthPx);
-    const rad = 2 * Math.atan(sizeMm / (2 * distanceMm));
-    return (rad * 180) / Math.PI;
+  function geometry(g) {
+    const ok = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+    if (!g || !ok(g.distanceCm) || !ok(g.screenWidthCm) || !ok(g.screenWidthPx)) return null;
+    return { distanceCm: g.distanceCm, cmPerPx: g.screenWidthCm / g.screenWidthPx };
   }
 
-  /**
-   * Calculate accuracy and precision metrics from a series of (prediction, target) pairs.
-   * @param {Array<{pred: {x:number, y:number}, target: {x:number, y:number}}>} samples
-   * @param {object} [geom] Optional { screenWidthMm, screenWidthPx, distanceMm }
-   * @returns {object} Accuracy and precision metrics
-   */
-  function computeGazeMetrics(samples, geom = null) {
-    if (!samples || samples.length === 0) {
-      return {
-        sampleCount: 0,
-        accuracyPx: 0,
-        accuracyDeg: 0,
-        precisionPx: 0,
-        precisionDeg: 0,
-        p95Px: 0,
-        p95Deg: 0,
-        errorsX: { mean: 0, std: 0 },
-        errorsY: { mean: 0, std: 0 },
-      };
-    }
+  /** A length on the screen (px) as the angle it covers at the eye, in degrees. */
+  function pxToDeg(px, geom) {
+    if (!geom || px == null || !Number.isFinite(px)) return null;
+    return Math.atan((Math.abs(px) * geom.cmPerPx) / geom.distanceCm) * 180 / Math.PI;
+  }
 
-    const n = samples.length;
-    const offsets = [];
-    let sumErr = 0;
-    let sumSqErr = 0;
-    let sumX = 0, sumY = 0;
-    let sumDiffX = 0, sumDiffY = 0;
+  const both = (px, geom) => ({ px, deg: pxToDeg(px, geom) });
+  const none = () => ({ px: null, deg: null });
 
-    for (let i = 0; i < n; i++) {
-      const s = samples[i];
-      const dx = s.pred.x - s.target.x;
-      const dy = s.pred.y - s.target.y;
-      const dist = Math.hypot(dx, dy);
-      offsets.push(dist);
-      sumErr += dist;
-      sumSqErr += dist * dist;
-      sumDiffX += dx;
-      sumDiffY += dy;
-      sumX += s.pred.x;
-      sumY += s.pred.y;
-    }
+  // ── Helpers ────────────────────────────────────────────────────────
 
-    // Accuracy: mean Euclidean distance from target
-    const accuracyPx = sumErr / n;
+  const mean = (values) => values.reduce((a, v) => a + v, 0) / values.length;
 
-    // 95th percentile error
-    offsets.sort((a, b) => a - b);
-    const p95Idx = Math.min(n - 1, Math.floor(n * 0.95));
-    const p95Px = offsets[p95Idx];
+  /** Nearest-rank percentile (p in 0..1); null for an empty list. */
+  function percentile(values, p) {
+    if (!values || !values.length) return null;
+    const s = values.slice().sort((a, b) => a - b);
+    return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1))];
+  }
 
-    // Precision: RMS distance from the centroid of predictions (spread during fixation)
-    const centroidX = sumX / n;
-    const centroidY = sumY / n;
-    let sumSqCentroidDist = 0;
-    for (let i = 0; i < n; i++) {
-      const s = samples[i];
-      const cdx = s.pred.x - centroidX;
-      const cdy = s.pred.y - centroidY;
-      sumSqCentroidDist += cdx * cdx + cdy * cdy;
-    }
-    const precisionPx = Math.sqrt(sumSqCentroidDist / n);
+  /** Mean and sample standard deviation (n − 1) of the values that are numbers. */
+  function meanSd(values) {
+    const v = (values || []).filter((x) => typeof x === 'number' && Number.isFinite(x));
+    if (!v.length) return { n: 0, mean: null, sd: null };
+    const m = mean(v);
+    if (v.length < 2) return { n: 1, mean: m, sd: null };
+    return { n: v.length, mean: m, sd: Math.sqrt(v.reduce((a, x) => a + (x - m) ** 2, 0) / (v.length - 1)) };
+  }
 
-    const degHelper = (px) => (geom ? pxToDegrees(px, geom.screenWidthMm, geom.screenWidthPx, geom.distanceMm) : null);
+  // ── Accuracy, precision, 95th percentile ───────────────────────────
 
+  /** @param {Array<{x:number,y:number}>} samples gaze points (px)  @param {{x,y}} target (px) */
+  function accuracy(samples, target, geom) {
+    const n = samples ? samples.length : 0;
+    if (!n) return { n: 0, ...none(), x: none(), y: none(), biasX: none(), biasY: none() };
+    const dx = samples.map((s) => s.x - target.x);
+    const dy = samples.map((s) => s.y - target.y);
+    const signed = (px) => ({ px, deg: px == null ? null : Math.sign(px) * pxToDeg(px, geom) });
     return {
-      sampleCount: n,
-      accuracyPx: Math.round(accuracyPx * 100) / 100,
-      accuracyDeg: geom ? Math.round(degHelper(accuracyPx) * 100) / 100 : null,
-      precisionPx: Math.round(precisionPx * 100) / 100,
-      precisionDeg: geom ? Math.round(degHelper(precisionPx) * 100) / 100 : null,
-      p95Px: Math.round(p95Px * 100) / 100,
-      p95Deg: geom ? Math.round(degHelper(p95Px) * 100) / 100 : null,
-      errorsX: { mean: sumDiffX / n },
-      errorsY: { mean: sumDiffY / n },
+      n,
+      ...both(mean(dx.map((v, i) => Math.hypot(v, dy[i]))), geom),
+      x: both(mean(dx.map(Math.abs)), geom),
+      y: both(mean(dy.map(Math.abs)), geom),
+      biasX: geom ? signed(mean(dx)) : { px: mean(dx), deg: null },
+      biasY: geom ? signed(mean(dy)) : { px: mean(dy), deg: null },
     };
   }
 
-  /**
-   * Compute selection task metrics (for keyboard/phrase selection evaluation).
-   * @param {Array<{target: string, selected: string|null, durationMs: number, correct: boolean}>} trials
-   * @returns {object} Selection task performance
-   */
-  function computeSelectionMetrics(trials) {
-    if (!trials || trials.length === 0) {
-      return { totalTrials: 0, correct: 0, wrong: 0, missed: 0, accuracyRate: 0, meanTimeMs: 0 };
-    }
-    const total = trials.length;
-    let correct = 0;
-    let wrong = 0;
-    let missed = 0;
-    let correctTimeSum = 0;
+  /** RMS spread of the samples around their own mean. Needs at least two samples. */
+  function precision(samples, geom) {
+    const n = samples ? samples.length : 0;
+    if (n < 2) return { n, ...none(), x: none(), y: none() };
+    const mx = mean(samples.map((s) => s.x));
+    const my = mean(samples.map((s) => s.y));
+    const vx = mean(samples.map((s) => (s.x - mx) ** 2));
+    const vy = mean(samples.map((s) => (s.y - my) ** 2));
+    return { n, ...both(Math.sqrt(vx + vy), geom), x: both(Math.sqrt(vx), geom), y: both(Math.sqrt(vy), geom) };
+  }
 
-    for (const t of trials) {
-      if (t.correct) {
-        correct++;
-        correctTimeSum += t.durationMs || 0;
-      } else if (t.selected === null) {
-        missed++;
-      } else {
-        wrong++;
+  /** The 95th percentile of the distance from the target. */
+  function p95(samples, target, geom) {
+    const n = samples ? samples.length : 0;
+    if (!n) return { n: 0, ...none() };
+    return { n, ...both(percentile(samples.map((s) => Math.hypot(s.x - target.x, s.y - target.y)), 0.95), geom) };
+  }
+
+  // ── Selection test ─────────────────────────────────────────────────
+  // A trial is one prompted target: { outcome: 'correct' | 'missed', timeMs,
+  // selections: [{ label, correct }] }. A trial ends at the first correct
+  // selection or at the time limit; wrong selections before that are counted.
+
+  /** Selections that hit a target other than the prompted one. */
+  function wrongSelections(trials) {
+    return (trials || []).reduce((a, t) => a + (t.selections || []).filter((s) => !s.correct).length, 0);
+  }
+
+  /** Prompts that timed out without the prompted target being selected. */
+  function missedSelections(trials) {
+    return (trials || []).filter((t) => t.outcome === 'missed').length;
+  }
+
+  /** Mean time (ms) from the prompt to the correct selection; null if none was correct. */
+  function timePerCorrectSelection(trials) {
+    const times = (trials || []).filter((t) => t.outcome === 'correct' && typeof t.timeMs === 'number').map((t) => t.timeMs);
+    return times.length ? mean(times) : null;
+  }
+
+  function selectionSummary(trials) {
+    const list = trials || [];
+    const wrong = wrongSelections(list);
+    const missed = missedSelections(list);
+    const correct = list.filter((t) => t.outcome === 'correct').length;
+    const selections = wrong + correct;
+    return {
+      trials: list.length, selections, correct, wrong, missed,
+      wrongPct: selections ? (wrong / selections) * 100 : null,   // share of selections that hit another target
+      missedPct: list.length ? (missed / list.length) * 100 : null, // share of prompts that timed out
+      timeMs: timePerCorrectSelection(list),
+    };
+  }
+
+  /** Unintended activations per minute of a rest period; null without a duration. */
+  function falseActivationsPerMin(count, durationMs) {
+    if (!(durationMs > 0) || count == null) return null;
+    return count / (durationMs / 60000);
+  }
+
+  // ── Lag and jitter ─────────────────────────────────────────────────
+
+  /**
+   * Time (ms) from the target's appearance until the gaze is inside the zone
+   * (within radiusPx of `center`) and stays inside for holdMs.
+   * @param {Array<{t:number,x:number,y:number}>} samples  t in ms from target onset
+   * @returns {number|null} null if it never settled
+   */
+  function settlingTime(samples, center, radiusPx, holdMs = 300) {
+    if (!samples || !samples.length) return null;
+    const inside = samples.map((s) => Math.hypot(s.x - center.x, s.y - center.y) <= radiusPx);
+    for (let i = 0; i < samples.length; i++) {
+      if (!inside[i]) continue;
+      let held = false;
+      let j = i;
+      for (; j < samples.length && inside[j]; j++) {
+        if (samples[j].t - samples[i].t >= holdMs) { held = true; break; }
       }
+      if (held) return samples[i].t;
+      i = j;   // left the zone before holdMs: continue after the exit
     }
-
-    return {
-      totalTrials: total,
-      correct,
-      wrong,
-      missed,
-      accuracyRate: Math.round((correct / total) * 1000) / 10, // percentage e.g. 90.5
-      meanTimeMs: correct > 0 ? Math.round(correctTimeSum / correct) : 0,
-    };
+    return null;
   }
 
-  /**
-   * Compute false activation rate during rest period.
-   * @param {number} activationCount Number of clicks/selections fired
-   * @param {number} durationMs      Duration of the rest period in ms
-   * @returns {number} Activations per minute
-   */
-  function computeFalseActivationsPerMin(activationCount, durationMs) {
-    if (!durationMs || durationMs <= 0) return 0;
-    const minutes = durationMs / 60000;
-    return Math.round((activationCount / minutes) * 100) / 100;
+  /** RMS of the movement between consecutive samples during a steady fixation. */
+  function fixationJitter(samples, geom) {
+    const steps = [];
+    for (let i = 1; i < (samples ? samples.length : 0); i++) {
+      steps.push(Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y));
+    }
+    if (!steps.length) return { n: 0, ...none() };
+    return { n: steps.length, ...both(Math.sqrt(mean(steps.map((d) => d * d))), geom) };
   }
 
   const api = {
-    pxToDegrees,
-    computeGazeMetrics,
-    computeSelectionMetrics,
-    computeFalseActivationsPerMin,
+    geometry, pxToDeg, percentile, meanSd,
+    accuracy, precision, p95,
+    wrongSelections, missedSelections, timePerCorrectSelection, selectionSummary, falseActivationsPerMin,
+    settlingTime, fixationJitter,
   };
-
   root.LumiMetrics = api;
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = api;
-  }
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

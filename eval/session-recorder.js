@@ -62,9 +62,10 @@
 
     /**
      * Begin a session. Throws unless consent is exactly `true`.
-     * @param {{consent:boolean, setup:object, screen:object, settings:object, settingsBefore?:object, flags?:object}} o
+     * @param {{consent:boolean, setup:object, screen:object, settings:object, settingsBefore?:object, flags?:object,
+     *          camera?:{width:number,height:number}}} o  camera: the picture's size in pixels
      */
-    start({ consent, setup, screen, settings, settingsBefore, flags, synthetic } = {}) {
+    start({ consent, setup, screen, settings, settingsBefore, flags, synthetic, camera } = {}) {
       if (consent !== true) throw new Error('Recording needs the participant\'s explicit consent.');
       const at = this._wallNow();
       const stamp = at.toISOString().replace(/[:.]/g, '-').slice(0, 19) + 'Z';
@@ -78,6 +79,9 @@
         synthetic: synthetic === true,
         setup: copy(setup) || {},
         screen: copy(screen) || {},
+        // Landmarks are normalised by the picture's width and height; its aspect ratio
+        // is needed to turn them back into true proportions.
+        camera: camera && camera.width > 0 && camera.height > 0 ? { width: camera.width, height: camera.height } : null,
         engine: { featureDim: Features.FEATURE_DIM, landmarkIndices: Features.RECORD_INDICES.slice(), flags: copy(flags) || {} },
         settingsBefore: copy(settingsBefore), settings: copy(settings),
         enums: { reason: REASONS.slice(), eyeMode: EYE_MODES.slice() },
@@ -171,10 +175,11 @@
     /** The app discarded the samples gathered so far for the current point. */
     calibrationClear() { this._calFrames = []; }
 
-    /** A point was committed: remember the frames that were in its buffer. */
+    /** A point was committed: remember the frames that were in its buffer, and when (t: the next target appears then). */
     calibrationPoint({ index, target, samples, accepted, rejected }) {
       if (!this._cal) return;
-      this._cal.targets.push({ index, x: target.x, y: target.y, frames: this._calFrames.slice(), samples, accepted, rejected });
+      this._cal.targets.push({ index, x: target.x, y: target.y, frames: this._calFrames.slice(), samples, accepted, rejected,
+                               t: r(this._now(), 2) });
       this._calFrames = [];
     }
 

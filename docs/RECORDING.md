@@ -8,7 +8,8 @@ someone else helps.
 
 - **Recorded:** numbers only. Per camera frame: a timestamp, 16 face landmark positions, the
   head matrix, eye opening, the 10 gaze features, and where the app estimated you were looking.
-  Also the targets shown, which keys were selected in the test, and the settings.
+  Also the targets shown, which keys were selected in the test, the settings, and the camera
+  picture's size in pixels.
 - **Not recorded:** no video, no camera images, no sound, nothing you type.
 - **Where:** one file per session in `eval/sessions/`, on this computer only. The folder is
   excluded from git and the server never serves it back.

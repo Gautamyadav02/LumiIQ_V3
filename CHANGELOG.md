@@ -3,6 +3,100 @@
 Changes to LumiIQ, the browser app at the root of this folder. The IDs (C1, H4, …) refer to the
 findings in [AUDIT.md](AUDIT.md). The original app is preserved as git tag **`LumiIQ_V1`**.
 
+## Unreleased — Phase B: the evaluation tool (branch `phase-b-eval`)
+
+The tool the dissertation's Section 3.6 describes. How to record: [docs/RECORDING.md](docs/RECORDING.md).
+Design decisions: [ADR 0002](docs/adr/0002-evaluation-tool.md). **No real session has been recorded
+yet, so `eval/BASELINE.md` is still empty.** Every number produced so far is synthetic.
+
+The branch started from commit `93404f3`, a first attempt at this phase made in another session.
+That attempt was replaced, because it could not run and would have misled:
+- the wizard could not start a session in a browser, and the consent box was pre-ticked;
+- 7 of the 10 stages existed, and false activations were counted on a blank screen;
+- a replay could not rebuild the calibration and silently predicted the screen centre;
+- an empty measurement was reported as 0 px.
+
+### Added
+
+- **Evaluation wizard** (Caregiver → Diagnostics → *Start an evaluation session*, about 10 minutes).
+  - **Ten stages:**
+    1. consent;
+    2. viewing distance and screen width;
+    3. settings reset;
+    4. 9-point calibration;
+    5. 12 held-out targets;
+    6. six head movements;
+    7. selection test by dwell and by blink;
+    8. a 2-minute rest;
+    9. lag and jitter at two smoothing levels;
+    10. 16-point calibration and the 12 targets again.
+  - **Consent:** never pre-ticked. Nothing is recorded before it is given, and stopping saves nothing.
+  - **Selection test and rest:** they use the real keyboard, with selections intercepted. Nothing
+    is typed or spoken, and Nurse Call cannot fire.
+  - **Operator only:** no control is a gaze target. Safety alarms stay on.
+- **Session recording** (`eval/session-recorder.js`).
+  - **Numbers only:** per frame, 16 landmarks, the head matrix, features, predictions and
+    timestamps. Never video or images.
+  - **Checked twice:** the recorder and the server both reject long or image-like text.
+  - **Storage:** one JSON file per session in the gitignored `eval/sessions/`.
+- **`POST /api/eval/session`**: saves a session through the local server.
+  - It has its own size limit, validates the session, and never overwrites.
+  - Sessions are never served back.
+- **Metrics** (`eval/metrics.js`).
+  - **Gaze:** accuracy, precision and 95th-percentile error, for x and y, in pixels and degrees.
+  - **Selection:** wrong and missed selections, time per correct selection, false activations
+    per minute.
+  - **Lag:** settling time and fixation jitter.
+  - No data gives "no number", never zero.
+- **Replay** (`eval/replay.js`, `node eval/replay.js`): runs a recorded session through the real
+  gaze code and reports how closely it reproduces the live gaze. Options change the model degree,
+  the cross-validation method and the smoothing.
+- **Report** (`npm run eval:report` → `eval/BASELINE.md`).
+  - The dissertation's Tables 4.6 and 4.7 as mean ± SD with n.
+  - The 95th-percentile error and the smallest target it allows.
+  - The in-app estimate beside the measured error.
+  - The session ids behind every row.
+  - `-- --synthetic` writes a separate, clearly marked pipeline check.
+- **`gaze/gaze-features.js`**: feature extraction as a shared module, so the app and the replay
+  run the same code. Behaviour unchanged.
+
+### Fixed
+
+- **The camera stopped when its picture was scrolled out of view.**
+  - **Cause:** the video was `autoplay muted`, and Chrome pauses such a video when it is not
+    visible. Scrolling the dashboard's left column hid it.
+  - **Effect:** camera frames stopped, and with them gaze tracking and every safety alarm,
+    silently.
+  - **Found by:** running the wizard in real Chrome.
+  - **Fix:** playback is now started explicitly. A **watchdog** notices when camera frames stop
+    for any reason, tries to resume, shows a notice, and raises a `CAMERA_STALLED` alarm if they
+    stay away for the face-lost time.
+- **M1: the calibration quality report used optimistic cross-validation.** It now leaves one
+  whole target out at a time, and says which method it used.
+  - **Honest scope:** this estimate errs on the safe side; it is not a measurement of accuracy.
+    The held-out targets are.
+  - **Lambda is chosen the same way,** so the trained model can differ from before.
+  - **Cost: calibration takes longer to compute** (Node, development Mac, synthetic samples):
+
+    | Points | Before | After |
+    |---|---|---|
+    | 9 | 83 ms | 189 ms |
+    | 16 | 144 ms | 612 ms |
+    | 25 | 227 ms | 1,572 ms |
+
+### Verified
+
+- `npm test`: every new behaviour has a test that failed first.
+- The wizard was run end to end in headless Chrome with a simulated face: all ten stages, saved as
+  one session, no console errors.
+- On simulated sessions the replay reproduces the model's output to within 0.01 px.
+
+### Not verified
+
+- **No real person has been recorded.** The tool has only been driven by simulated faces.
+- **The head-movement guidance** depends on the sign and scale of MediaPipe's head angles on a
+  real camera, which is still unconfirmed (Phase A check D5).
+
 ## Unreleased — Phase A: diagnosis tools (branch `phase-a-diagnosis`)
 
 These are diagnostic tools only: gaze, dwell, blink and alarm behaviour are unchanged, and all

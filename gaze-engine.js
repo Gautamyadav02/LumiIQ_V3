@@ -842,6 +842,9 @@ const LumiGaze = {
         const run = this._calibRun;
         this._calibRun = null;
         const report = run.train({ width: window.innerWidth, height: window.innerHeight });
+        // Training blocked the page for a moment (up to a second or two with many
+        // points), so no frame was handled meanwhile: that gap is not a stalled camera.
+        if (this._lastFrameAt !== null) this._lastFrameAt = performance.now();
         if (report.ok) {
             this._pendingCalibration = run;
             this.updateStatus(`Calibration trained — ${report.rating}. Accept it to start using it.`, 'success');

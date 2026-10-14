@@ -118,3 +118,21 @@ test('no stall is reported while the page is hidden, or after the camera is stop
   stopped.env.clock.advance(60000);
   assert.deepEqual(stopped.stalls(), []);
 });
+
+test('the pause while a calibration is being computed is not mistaken for a stalled camera', () => {
+  const ctx = tracking();
+  const gaze = ctx.gaze;
+  gaze.startCalibration(5);
+  for (let point = 0; point < 5; point++) {
+    feedFrames(ctx, 700, EYES_OPEN);
+    if (point === 4) {
+      // Training blocks the page: no camera frame can be handled while it runs.
+      const run = gaze._calibRun, train = run.train.bind(run);
+      run.train = (screen) => { ctx.env.clock.now += 3000; return train(screen); };
+    }
+    gaze.captureCalibrationPoint();
+  }
+  ctx.env.clock.advance(1500);                   // the watchdog's next check, before the next frame
+  assert.deepEqual(ctx.notices.filter((n) => n.message && /camera frames/i.test(n.message)), []);
+  assert.equal(ctx.video.plays, 0);
+});

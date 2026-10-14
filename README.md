@@ -60,6 +60,7 @@ Then in Chrome:
 | POST   | `/api/logs/typed`    | `{ text }`                 | Log a spoken sentence |
 | POST   | `/api/logs/symptom`  | `{ bodyPart, symptom }`    | Log a reported symptom |
 | POST   | `/api/logs/alert`    | `{ type, details }`        | Log a safety alert |
+| POST   | `/api/eval/session`  | one evaluation session     | Save it to `eval/sessions/` (never served back) |
 | DELETE | `/api/logs`          | —                          | Clear all logs |
 
 All endpoints return JSON. Log entries accept an optional ISO-8601 `timestamp` (the
@@ -118,6 +119,11 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
    EAR per eye, head pose, why a frame gave no gaze point), frame statistics, and a guided
    eyes open/closed check for the EAR threshold. Nothing is saved or sent. See
    [docs/diagnosis/phase-a.md](docs/diagnosis/phase-a.md).
+8. **Evaluation session (caregiver only)** — a guided, consented 10-minute session that measures
+   accuracy on targets not used for calibration, the effect of head movement, selection by dwell
+   and by blink, false activations and lag. It records numbers only, never video, into
+   `eval/sessions/` on this computer. `npm run eval:report` turns the sessions into
+   `eval/BASELINE.md`. See [docs/RECORDING.md](docs/RECORDING.md).
 
 ---
 
@@ -137,9 +143,16 @@ To reset everything, just delete `lumiiq.db` (or `DELETE /api/logs` to clear log
 | `dictionary.js` | Prediction + spelling suggestions (`LumiDictionary`) |
 | `database.js`   | API client, cache and offline write queue (`LumiStore`) |
 | `diagnostics.js` | Caregiver diagnostics: feed overlay, frame statistics, EAR check (`LumiDiagnostics`) |
+| `gaze/gaze-features.js` | Feature extraction, shared by the app and the offline replay (`GazeFeatures`) |
+| `eval/eval-wizard.js` | The evaluation wizard (`LumiEvalWizard`) |
+| `eval/session-recorder.js` | Records a session as numbers (`LumiSessionRecorder`) |
+| `eval/metrics.js` | Accuracy, precision, selection and lag metrics (`LumiMetrics`) |
+| `eval/replay.js` | Node: replays recorded sessions through the real gaze code |
+| `eval/report.js` | Node: writes `eval/BASELINE.md` |
 
 ## ✅ Tests
 
 ```bash
-npm test     # JavaScript unit tests + server integration tests; nothing to install
+npm test              # JavaScript unit tests + server integration tests; nothing to install
+npm run eval:report   # eval/BASELINE.md from the recorded sessions in eval/sessions/
 ```

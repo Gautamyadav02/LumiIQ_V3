@@ -1,9 +1,8 @@
 # LumiIQ — Complete Project Detail
 
-*Updated 14 October 2026 from the code on branch `phase-0-explain` (commit `a19be7c`, the same
-code as `phase-a-diagnosis`). First written 28 September 2026. Every number below was read from
-the code or produced by the test suite on 14 October. Where something has not been measured,
-this document says so.*
+*Updated 14 October 2026 from the code on branch `phase-b-eval`. First written 28 September 2026.
+Every number below was read from the code or produced by the test suite on 14 October. Where
+something has not been measured, this document says so.*
 
 ---
 
@@ -11,23 +10,25 @@ this document says so.*
 
 | | |
 |---|---|
-| **Current code** | Branch `phase-0-explain`, commit `a19be7c` (30 Sep 2026). No commits since |
-| **What that code is** | The original app + 18 audit-fix commits (`fix/phase0-findings`) + 5 Phase A diagnosis commits |
-| **On GitHub** | `main` and `fix/phase0-findings` only. `phase-a-diagnosis` and `phase-0-explain` are **local only** |
-| **Uncommitted** | This file, `detail.md` (never committed) |
-| **Tests today** | `npm test` passes: 32 gaze unit tests, 1 smoke test, 146 Node tests (145 pass, 1 known "todo"), 26 server tests |
-| **Works** | Keyboard, phrases, body map, speech, alarms, sleep mode, calibration, dwell and blink selection, caregiver dashboard, diagnostics, local server |
+| **Current code** | Branch `phase-b-eval`: the original app + 18 audit-fix commits + 5 diagnosis commits + the evaluation tool |
+| **On GitHub** | `main` and `fix/phase0-findings` only. `phase-a-diagnosis`, `phase-0-explain` and `phase-b-eval` are **local only** |
+| **Tests today** | `npm test` passes: 32 gaze unit tests, 1 smoke test, 232 Node tests (231 pass, 1 known "todo"), 37 server tests |
+| **Works** | Keyboard, phrases, body map, speech, alarms, sleep mode, calibration, dwell and blink selection, caregiver dashboard, diagnostics, the evaluation wizard, local server |
 | **Main problem** | **Gaze accuracy is poor in real use.** The author and the supervisor have both seen this. It has not been measured yet, so there is no number for it |
-| **Missing** | The evaluation tool described in the dissertation (Section 3.6) **does not exist yet**. Building it is Phase B |
-| **In progress** | Phase 0 (explain the tests for the viva). Only the branch exists so far; nothing is written yet |
-| **Waiting on** | The Phase A on-screen checks (D1–D6 in `docs/diagnosis/phase-a.md`) have not been reported back |
+| **The evaluation tool** | **Built** (the dissertation's Section 3.6): wizard, recording, replay and report. **No real session has been recorded yet**, so `eval/BASELINE.md` is empty. Every number the tool has produced so far is synthetic |
+| **Waiting on** | Real sessions (see `docs/RECORDING.md`), and the Phase A on-screen checks (D1–D6), which have not been reported back |
 
-**What changed since the 28 September version of this document** (Phase A, 30 Sep):
-- a **detection overlay** on the live feed, **frame statistics** and an **eyes open/closed check**
-  (section 5.6);
-- a **Reset settings to defaults** button;
-- the misleading amber crosshair on the live feed replaced by an "eye direction" inset;
-- three problems found but not changed yet (section 19, items 2–4).
+**What changed since the 28 September version of this document:**
+- **Phase A (30 Sep):**
+  - a detection overlay, frame statistics and an eyes open/closed check (section 5.6);
+  - *Reset settings to defaults*;
+  - the misleading amber crosshair replaced by an "eye direction" inset.
+- **Phase B (14 Oct):**
+  - the **evaluation wizard**, session recording, offline replay and the report (section 5.7);
+  - a serious bug found and fixed: **the camera stopped whenever its picture was scrolled out of
+    view**, silently stopping gaze and every alarm (section 6);
+  - the calibration's own quality estimate now uses leave-one-target-out (audit M1, section 10.3).
+- **Still open:** three problems found in Phase A (section 19, items 2–4).
 
 ---
 
@@ -89,7 +90,8 @@ log, calibration, a sleep-mode switch and all settings.
 **Status:**
 - **Research prototype, not a medical device.**
 - **Gaze accuracy is poor in real use, and has not been measured yet.** The author and the
-  supervisor have both observed it. Measuring it is Phase B (section 20).
+  supervisor have both observed it. The tool to measure it now exists (section 5.7); the
+  measurements need recorded sessions.
 - It is the artefact of an MSc dissertation.
 
 ---
@@ -108,8 +110,8 @@ log, calibration, a sleep-mode switch and all settings.
 | Runs on | Chrome on a laptop/desktop with a webcam; tested on macOS |
 | Internet needed? | No. Every file the app needs is served locally |
 | Languages | English (US/UK) and Hindi for speech; bilingual labels on the body map |
-| Tests | 32 gaze unit tests, 1 smoke test, 146 Node tests (145 pass, 1 recorded "todo"), 26 server tests |
-| Size | About 5,900 lines of app code (JavaScript, HTML, CSS, Python) and 2,800 lines of tests, excluding the vendored MediaPipe |
+| Tests | 32 gaze unit tests, 1 smoke test, 232 Node tests (231 pass, 1 recorded "todo"), 37 server tests |
+| Size | About 8,900 lines of app and evaluation code (JavaScript, HTML, CSS, Python) and 4,800 lines of tests, excluding the vendored MediaPipe |
 
 ---
 
@@ -280,6 +282,39 @@ wrong)? Nothing they show is saved or sent.
 
 What to look at, step by step, is in `docs/diagnosis/phase-a.md` (checks D1–D6 and M1–M3).
 
+### 5.7 Evaluation session (caregiver only, added in Phase B)
+
+This is the evaluation the dissertation's Section 3.6 describes. **Caregiver → Diagnostics →
+Start an evaluation session** runs a guided session of about 10 minutes and saves it as one file.
+
+| Stage | What it does |
+|---|---|
+| 1 Consent | Says what is and is not recorded. The box is never pre-ticked; nothing is recorded before it |
+| 2 Setup | Viewing distance and screen width (for degrees of visual angle), and a lighting label |
+| 3 Settings reset | Shows the current settings, then applies the defaults |
+| 4 Calibration | 9 points, head still, with the app's own timing |
+| 5 Accuracy check | 12 targets the model never saw: 4 corners, 2 in the header band, 2 on the right edge (one on Nurse Call), 4 interior |
+| 6 Head movement | Turn left/right, tilt up/down, lean closer/back. A live readout guides each one; 4 targets are measured after each |
+| 7 Selection test | 10 prompted keys by dwell, then 10 by blink, on the real keyboard. Selections are intercepted: nothing is typed or spoken |
+| 8 Rest | 2 minutes with the keyboard visible and no intent to select: any selection is a false activation |
+| 9 Lag and jitter | A 5-second fixation and a jumping target, at smoothing 0.35 and 0.06 |
+| 10 Calibration again | 16 points, then the same 12 targets |
+
+- **What is recorded:** numbers only. Per frame: 16 landmark positions, the head matrix, the
+  features, the predictions and timestamps. Never video or images.
+- **Where:** `eval/sessions/<id>.json`, on this computer, excluded from git. A session is 4–8 MB.
+- **Stopping** at any point saves nothing. Safety alarms stay on throughout.
+- **`node eval/replay.js`** re-runs a recorded session through the app's own gaze code and reports
+  how closely it reproduces the live gaze. Options change the model and the smoothing, so
+  variants are compared on identical data.
+- **`npm run eval:report`** writes `eval/BASELINE.md`:
+  - the dissertation's Tables 4.6 and 4.7 as mean ± SD across sessions;
+  - the 95th-percentile error and the smallest target it allows;
+  - the session ids behind every row.
+  - Every row is labelled "replayed real" or "live real", and a figure with no data is "—".
+- **How to record** is in `docs/RECORDING.md`: at least 3 sessions per lighting condition, in
+  2 lighting conditions, over 2 days.
+
 ---
 
 ## 6. Safety alarms
@@ -303,6 +338,7 @@ alarm card says so. An earlier version falsely claimed "API webhook sent" (fix H
 | `RAPID_BLINKS` | 6 blinks within 3 s; at most once every 15 s | No |
 | `FACE_NOT_DETECTED` | No face in the camera for *Face-lost alarm* seconds (default 10) while tracking | No |
 | `CAMERA_LOST` | The camera stops (unplugged, blocked, taken by another app) | No |
+| `CAMERA_STALLED` | Camera frames stop arriving for *Face-lost alarm* seconds while tracking (added in Phase B) | No |
 
 Some events are **logged but do not sound the siren:**
 - `MONITORING_PAUSED` / `MONITORING_RESUMED`: the browser stops delivering camera frames when the
@@ -312,6 +348,15 @@ Some events are **logged but do not sound the siren:**
 
 Each event is logged exactly once. The original code logged every alarm two or three times
 (fix M7).
+
+**The camera watchdog (Phase B).** Every safety check runs when a camera frame arrives, so if
+frames stop, nothing would ever alarm. A watchdog checks once a second:
+- after 2 s without a frame it tries to resume the video and shows "Camera frames have stopped";
+- if they stay away for the face-lost time it raises `CAMERA_STALLED`.
+
+It was added after finding that Chrome paused the camera whenever its picture was scrolled out
+of view on the dashboard. That cause is fixed too: playback is now started explicitly, without
+`autoplay`.
 
 ---
 
@@ -390,7 +435,9 @@ says so. A stored end time more than 12 hours ahead is not trusted.
 
 ## 9. How it works: the gaze pipeline
 
-Every camera frame goes through these steps (file: `gaze-engine.js` unless stated).
+Every camera frame goes through these steps (file: `gaze-engine.js` unless stated). Feature
+extraction itself (sections 9.2 and 9.3) lives in `gaze/gaze-features.js`, so that the offline
+replay runs exactly the same code as the live app.
 
 ### 9.1 Camera and face landmarks
 
@@ -531,22 +578,35 @@ screen Y:
 The saved calibration is about 9 KB of JSON: weights, means, standard deviations, λ and the
 quality report.
 
-### 10.3 The quality report, and why it is optimistic
+### 10.3 The quality report, and what it can and cannot tell you
 
 The results screen shows:
-- **Rating:** from the cross-validated R², Excellent ≥ 0.9, Good ≥ 0.8, Fair ≥ 0.65, otherwise Poor;
+- **Rating:** from the cross-validated R²: Excellent ≥ 0.9, Good ≥ 0.8, Fair ≥ 0.65, otherwise Poor;
 - **Confidence:** R² as a percentage;
 - **Est. Accuracy:** the cross-validated RMS error in pixels.
 
-**These numbers are optimistic** (audit finding M1, not yet fixed):
-- The cross-validation folds are interleaved, so frames of the same target appear in both the
-  training and the test folds.
-- In the audit's synthetic tests the reported error was 1.2–5× too small, depending on head
-  behaviour.
-- The rating said "Excellent" in all 8 synthetic scenarios, so it does not discriminate.
+**How it is estimated (changed in Phase B, audit M1):**
+- **Before:** interleaved folds. Frames of the same target sat in both the training and the test
+  folds, so the estimate was optimistic.
+- **Now:** leave-one-target-out. Each fold trains on every target but one and tests on the one
+  left out. Lambda is chosen the same way, so the trained model can differ from before.
 
-**The honest yardstick** is separate validation targets shown after calibration, which Phase B
-will add. Until then, treat "Est. Accuracy" as a lower bound, not a measurement.
+**It is still not a measurement of accuracy:**
+- On synthetic calibrations it comes out *above* the true error on unseen targets, because a
+  held-out corner must be extrapolated. It errs on the safe side.
+- The rating is based on R², which stays high even when the pixel error is large, so "Excellent"
+  still says little.
+- **The measurement is the held-out targets** in the evaluation session (section 5.7). The
+  report prints the old estimate, the new estimate and the measured error side by side.
+
+**Cost:** more models are trained, so "Computing the calibration…" takes longer (Node,
+development Mac, synthetic samples):
+
+| Points | Before | After |
+|---|---|---|
+| 9 | 83 ms | 189 ms |
+| 16 | 144 ms | 612 ms |
+| 25 | 227 ms | 1,572 ms |
 
 ---
 
@@ -613,6 +673,7 @@ key can select it. Phase B counts false selections with blink-select on and off.
 | POST | `/api/logs/symptom` | `{bodyPart, symptom, timestamp?}` | 201 |
 | POST | `/api/logs/alert` | `{type, details, timestamp?}` | 201 |
 | DELETE | `/api/logs` | — | clears all logs |
+| POST | `/api/eval/session` | one evaluation session | 201; written to `eval/sessions/<id>.json` |
 
 **Validation:**
 - **Settings:** every setting has a type and range (section 14). Unknown keys are ignored.
@@ -623,6 +684,9 @@ key can select it. Phase B counts false selections with blink-select on and off.
 - **`timestamp`:** optional; the time of the event, used for writes queued while offline. It must
   be ISO 8601 with a timezone and not in the future.
 - **Body size:** at most 256 KB per request; larger bodies are refused with 413.
+- **Evaluation sessions** have their own endpoint and their own limit (64 MB). A session must
+  have the right format, a safe id, consent given, numeric frames, and no long or image-like
+  text. An existing session is never overwritten, and sessions are never served back.
 
 **Security model:**
 1. The server listens on **127.0.0.1**, so other computers cannot connect.
@@ -669,11 +733,12 @@ alone. Putting it online (section 20) will need authentication and HTTPS first.
 
 | File | What it holds |
 |---|---|
+| `eval/sessions/*.json` | Evaluation sessions: face-landmark positions over time, and the calibration |
 | `lumiiq.db` | Real usage, Aug–Sep 2026: typed messages, symptoms, alerts, a face-derived calibration |
 | `eyecare.db` | Real usage, Jun–Jul 2026, from the earlier EyeCare version |
 | `~/DeepGaze-Experiment/dataset`, `models` | 76 photos of a real person's eyes, and a model trained on them |
 
-All three are excluded by `.gitignore`. A scan of the working tree and the full git history of
+All of them are excluded by `.gitignore`. A scan of the working tree and the full git history of
 every repo found no databases, no secrets and no `.env` files.
 
 **Under UK GDPR, health data combined with facial data is special-category data.** Any future
@@ -757,8 +822,8 @@ npm test
 |---|---|---|
 | `gaze/test_gaze.js` | Maths of the gaze modules: polynomial features, linear solver, ridge regression, cross-validation, One-Euro filter, stabiliser deadband, dwell, calibration layouts and a synthetic end-to-end calibration | 32 passed |
 | `gaze/_smoke.js` | End-to-end smoke test of the gaze modules | OK |
-| `tests/*.test.js` + `gaze/test_drift.js`, `gaze/test_confidence.js` (Node's built-in test runner, 21 files) | App behaviour: gaze targets, dwell, blink select, sleep mode, alarms, calibration flow, offline queue, settings reset, keyboard, body map, phrases, voice, service worker, engine start-up, diagnostics, no external requests | 146 tests: 145 pass, 1 "todo" (the drift detector, M10) |
-| `tests/test_server.py` (Python unittest) | Real server on a temporary database: file allow-list, host check, no CORS, JSON-only writes, size limit, validation, logs, settings, calibration | 26 passed |
+| `tests/*.test.js` + `gaze/test_drift.js`, `gaze/test_confidence.js` (Node's built-in test runner, 28 files) | App behaviour: gaze targets, dwell, blink select, sleep mode, alarms, camera watchdog, calibration flow and cross-validation, offline queue, settings reset, keyboard, body map, phrases, voice, service worker, engine start-up, diagnostics, the evaluation wizard, recorder, metrics, replay and report, no external requests | 232 tests: 231 pass, 1 "todo" (the drift detector, M10) |
+| `tests/test_server.py` (Python unittest) | Real server on a temporary database: file allow-list, host check, no CORS, JSON-only writes, size limit, validation, logs, settings, calibration, saving evaluation sessions | 37 passed |
 
 **How the browser is tested without a browser:**
 - `tests/helpers/browser-env.js` is a small fake browser (DOM, `localStorage`, `fetch`,
@@ -772,17 +837,25 @@ npm test
 
 | File | Tests | File | Tests |
 |---|---|---|---|
-| `tests/alerts.test.js` | 13 | `tests/keyboard.test.js` | 4 |
-| `tests/app.test.js` | 8 | `tests/no-external-requests.test.js` | 2 |
-| `tests/blink-select.test.js` | 12 | `tests/phrases.test.js` | 3 |
-| `tests/body-map.test.js` | 3 | `tests/scripts-load.test.js` | 3 |
-| `tests/calibration-flow.test.js` | 5 | `tests/service-worker.test.js` | 6 |
-| `tests/diagnostics-app.test.js` | 8 | `tests/sleep-mode.test.js` | 12 |
-| `tests/diagnostics-module.test.js` | 11 | `tests/store.test.js` | 10 |
-| `tests/diagnostics.test.js` | 10 | `tests/voice.test.js` | 6 |
-| `tests/dwell.test.js` | 12 | `gaze/test_drift.js` | 4 (1 is the "todo") |
-| `tests/engine-lifecycle.test.js` | 6 | `gaze/test_confidence.js` | 4 |
-| `tests/gaze-targets.test.js` | 4 | | |
+| `tests/alerts.test.js` | 13 | `tests/eval-wizard.test.js` | 14 |
+| `tests/app.test.js` | 8 | `tests/gaze-features.test.js` | 5 |
+| `tests/blink-select.test.js` | 12 | `tests/gaze-targets.test.js` | 4 |
+| `tests/body-map.test.js` | 3 | `tests/keyboard.test.js` | 4 |
+| `tests/calibration-flow.test.js` | 5 | `tests/loto-cross-val.test.js` | 7 |
+| `tests/camera-stall.test.js` | 8 | `tests/no-external-requests.test.js` | 2 |
+| `tests/diagnostics-app.test.js` | 8 | `tests/phrases.test.js` | 3 |
+| `tests/diagnostics-module.test.js` | 11 | `tests/recording-hooks.test.js` | 6 |
+| `tests/diagnostics.test.js` | 10 | `tests/scripts-load.test.js` | 3 |
+| `tests/dwell.test.js` | 12 | `tests/service-worker.test.js` | 6 |
+| `tests/engine-lifecycle.test.js` | 6 | `tests/sleep-mode.test.js` | 12 |
+| `tests/eval-report.test.js` | 10 | `tests/store.test.js` | 10 |
+| `tests/eval-tools.test.js` | 36 | `tests/voice.test.js` | 6 |
+| `gaze/test_drift.js` | 4 (1 is the "todo") | `gaze/test_confidence.js` | 4 |
+
+**The evaluation tool is tested end to end without a person.** `tests/helpers/wizard.js` runs the
+real wizard on the real engine with a simulated person (who looks where asked, blinks to select,
+and moves their head) and a simulated operator. Everything such a run produces is synthetic. The
+wizard was also run once in real Chrome with a simulated face, which is how the camera bug was found.
 
 **Passing tests do not mean accurate gaze.** The tests check that the code does what it was
 written to do, on synthetic input: for example that a dwell is cancelled after a tracking gap.
@@ -797,37 +870,44 @@ branches have not been pushed, so CI has not run on them; `npm test` passes on t
 **Not covered by automated tests:**
 - A real webcam and real eyes. The camera and MediaPipe paths were checked in headless Chrome with
   a fake camera (MediaPipe loads; the no-face alarm fires once; the overlay markers line up with
-  a synthetic test video), but gaze accuracy with a person is unmeasured.
+  a synthetic test video; the evaluation wizard completes with a simulated face), but gaze
+  accuracy with a person is unmeasured.
 - Real speech output.
 
 ---
 
 ## 17. Code map
 
-The app (branch `phase-0-explain`, 14 Oct 2026):
+The app (branch `phase-b-eval`, 14 Oct 2026):
 
 | File | Lines | Role |
 |---|---|---|
-| `index.html` | 342 | Page layout: tabs, dashboard, calibration overlay, eyes open/closed check, alarm card |
-| `styles.css` | 758 | Dark amber/charcoal theme, large targets |
-| `app.js` | 806 | `EyeApp`: tabs, cursor and ring, alarms and siren, calibration UI, sleep-mode UI, logs, settings, diagnostics UI |
-| `gaze-engine.js` | 885 | `LumiGaze`: MediaPipe, features, confidence, safety monitoring, blink select, sleep mode, calibration control, per-frame record |
-| `diagnostics.js` | 316 | `LumiDiagnostics`: camera-to-feed mapping, detection overlay, frame statistics, eyes open/closed check |
-| `gaze/ridge-regression.js` | 357 | Householder QR, polynomial features, ridge, cross-validation, λ selection |
-| `gaze/gaze-calibration.js` | 273 | Target layouts, outlier rejection, training, quality report |
+| `index.html` | 390 | Page layout: tabs, dashboard, calibration overlay, eyes open/closed check, evaluation wizard, alarm card |
+| `styles.css` | 796 | Dark amber/charcoal theme, large targets |
+| `app.js` | 815 | `EyeApp`: tabs, cursor and ring, alarms and siren, calibration UI, sleep-mode UI, logs, settings, diagnostics UI |
+| `gaze-engine.js` | 891 | `LumiGaze`: MediaPipe, safety monitoring, camera watchdog, blink select, sleep mode, calibration control, per-frame record |
+| `gaze/gaze-features.js` | 169 | `GazeFeatures`: the 10 features, EAR, head pose, confidence (shared with the replay) |
+| `gaze/ridge-regression.js` | 403 | Householder QR, polynomial features, ridge, interleaved and leave-one-target-out cross-validation, λ selection |
+| `gaze/gaze-calibration.js` | 285 | Target layouts, outlier rejection, training, quality report |
 | `gaze/dwell-controller.js` | 251 | Dwell state machine |
 | `gaze/one-euro-filter.js` | 143 | One-Euro filter |
-| `gaze/gaze-stabilizer.js` | 89 | Filter + deadband for 2-D points |
+| `gaze/gaze-stabilizer.js` | 103 | Filter + deadband for 2-D points; the smoothing-setting mapping |
 | `gaze/drift-detector.js` | 24 | Drift warning (does not work yet; M10) |
+| `diagnostics.js` | 316 | `LumiDiagnostics`: camera-to-feed mapping, detection overlay, frame statistics, eyes open/closed check |
+| `eval/eval-wizard.js` | 832 | `LumiEvalWizard`: the ten-stage evaluation session |
+| `eval/session-recorder.js` | 304 | `LumiSessionRecorder`: one session as numbers; validation; saving |
+| `eval/metrics.js` | 367 | `LumiMetrics`: accuracy, precision, p95, selection, lag; the session analysis |
+| `eval/replay.js` | 357 | Node: replays sessions through the real gaze code |
+| `eval/report.js` | 322 | Node: writes `eval/BASELINE.md` |
 | `database.js` | 265 | `LumiStore`: API client, cache, offline queue, settings reset |
 | `keyboard.js` | 157 | `LumiKeyboard`: QWERTY, suggestions, Nurse Call |
 | `dictionary.js` | 173 | `LumiDictionary`: prediction and spelling suggestions |
 | `body-map.js` | 206 | `LumiBodyMap`: zones, symptoms, bilingual messages |
 | `phrases.js` | 49 | `LumiPhrases`: phrase board, urgent alarm |
 | `voice.js` | 100 | `LumiVoice`: speech, voice choice, Hindi detection |
-| `sw.js` | 69 | Service worker (network-first, offline fallback; cache `lumiiq-v5`) |
-| `server.py` | 602 | Local server, API, SQLite, security |
-| `tests/`, `gaze/test_*.js`, `gaze/_smoke.js` | ~2,800 | Tests and helpers (section 16) |
+| `sw.js` | 73 | Service worker (network-first, offline fallback; cache `lumiiq-v7`) |
+| `server.py` | 694 | Local server, API, SQLite, security, saving evaluation sessions |
+| `tests/`, `gaze/test_*.js`, `gaze/_smoke.js` | ~4,800 | Tests and helpers (section 16) |
 | `eval/synthetic/ear-threshold.js` | 56 | Synthetic analysis of what the EAR threshold changes, run on the real modules |
 
 **Other files:**
@@ -844,9 +924,8 @@ The app (branch `phase-0-explain`, 14 Oct 2026):
 ## 18. Audit findings and their status
 
 A read-only audit (`AUDIT.md`, 23 Sep 2026) found **35 issues**: 2 critical, 8 high, 13 medium
-and 12 low. All are fixed with tests except five, which change gaze accuracy or dwell behaviour
-and so need measurements first. (`AUDIT.md` line 32 still says "34 in total"; that is a
-miscount, to be corrected in Phase 0.)
+and 12 low. All are fixed with tests except four, which change gaze accuracy or dwell behaviour
+and so need measurements first.
 
 | ID | Problem found | Status |
 |---|---|---|
@@ -860,7 +939,7 @@ miscount, to be corrected in Phase 0.)
 | H6 | Autocorrect changed meaning ("CANT"→"Want", "OK"→"Or") | Fixed |
 | H7 | Stored script injection (XSS) in the dashboard | Fixed |
 | H8 | Speech preferred online voices; failures were silent | Fixed (voices must be checked on the target machine) |
-| M1 | Calibration quality report is optimistic | **Open: Phase B** |
+| M1 | Calibration quality report is optimistic | Fixed in Phase B: leave-one-target-out. Still an estimate, not a measurement (section 10.3) |
 | M2 | Head movement after calibration gives large, undetected errors | **Open: Phase C** |
 | M3 | A steady look re-fired the same key | Fixed |
 | M4 | One frame off a target resets the dwell | **Open: Phase C** |
@@ -886,8 +965,9 @@ Details of every fix are in `CHANGELOG.md`; the evidence for every finding is in
    - **Observed:** the author and the supervisor have both seen it. This is a real observation,
      not a suspicion.
    - **No number yet:** no figure exists for how close the cursor lands to where the person looks.
-   - **The in-app score does not help:** the calibration report is optimistic (M1). It rated the
-     current calibration "Excellent".
+   - **The in-app score does not help:** it is an estimate, not a measurement (section 10.3). It
+     rated the saved calibration "Excellent".
+   - **The tool to measure it exists now** (section 5.7), but no session has been recorded.
    - **Keys are small relative to the error:** the audit's layout measurements show that even the
      app's own optimistic figure for an earlier calibration (~180 px RMS) is larger than half a
      letter key (58–90 px, depending on screen size). **Neighbouring-key selections should be
@@ -916,8 +996,12 @@ Details of every fix are in `CHANGELOG.md`; the evidence for every finding is in
     the body zones.
 11. **Speech voices** depend on the OS; check that an on-device voice exists for each language.
 12. **Single user, single device, no login.** Fine locally; not ready to be put online.
-13. **The dissertation describes an evaluation tool that is not built yet** (its Section 3.6).
-    Until Phase B is done, the dissertation's result tables cannot be filled with real numbers.
+13. **The evaluation tool has only been driven by simulated faces.** It is built and tested, and
+    it ran end to end in Chrome, but until real sessions are recorded the dissertation's result
+    tables are empty. Recording may also reveal problems a simulated face cannot, for example in
+    the head-movement guidance, which depends on the sign and scale of MediaPipe's head angles.
+14. **Calibration takes longer to compute** since Phase B: about 0.2 s for 9 points, 0.6 s for 16
+    and 1.6 s for 25 (Node, synthetic samples). The page is frozen meanwhile.
 
 ---
 
@@ -946,12 +1030,12 @@ Details of every fix are in `CHANGELOG.md`; the evidence for every finding is in
 | Features | `fix/phase0-findings` | Blink to select, sleep mode | **Done** |
 | GitHub | — | Private repos for all seven versions | **Done** (28 Sep 2026) |
 | A | `phase-a-diagnosis` | Diagnosis tools: detection overlay, frame statistics, eyes open/closed check, settings reset; written diagnosis | **Done** (30 Sep 2026); the on-screen checks have not been reported back |
-| 0 | `phase-0-explain` | For the viva: `docs/EXPLAINED.md` (what the tests do and don't prove, six tests to show live, the five open items); `npm run test:summary`; correct "34" to "35" in `AUDIT.md` | **Started** (branch only; nothing written yet) |
-| B | `phase-b-eval` | **Build the evaluation tool the dissertation describes** (below) | Next |
+| 0 | `phase-0-explain` | For the viva: `docs/EXPLAINED.md` (what the tests do and don't prove, six tests to show live, the open items); `npm run test:summary` | **Not done**: only the branch exists. The "34" → "35" correction in `AUDIT.md` was made in Phase B |
+| B | `phase-b-eval` | **The evaluation tool the dissertation describes** (below) | **Built** (14 Oct 2026). **No real session recorded yet** |
 | C | `phase-c-gaze` | Improve accuracy, measured against the Phase B baseline on held-out sessions | Cannot start until `eval/BASELINE.md` holds real-session numbers |
 | D | `phase-d-ui` | Size the interface to the measured error; optional two-step keyboard | Only if approved |
 
-**Phase B in more detail:**
+**Phase B in more detail** (built; see section 5.7 and `docs/adr/0002-evaluation-tool.md`):
 - **Evaluation wizard** on the Caregiver tab:
   1. consent;
   2. viewing distance, screen width and lighting;
@@ -1010,13 +1094,13 @@ separation and a data-protection review first.
   | `main` | `9d60ece` (tag **`LumiIQ_V1`**) | The app exactly as it was before any change | Yes |
   | `fix/phase0-findings` | `b833f6c` | 18 commits of audit fixes and features | Yes |
   | `phase-a-diagnosis` | `a19be7c` | 5 more commits: the Phase A diagnosis tools and documents | **No, local only** |
-  | `phase-0-explain` (current) | `a19be7c` | Nothing new yet | **No, local only** |
+  | `phase-0-explain` | `a19be7c` | Nothing new yet | **No, local only** |
+  | `phase-b-eval` (current) | see `git log` | The evaluation tool, the camera fix, the M1 fix | **No, local only** |
 
   - To see the pushed changes:
     `https://github.com/Gautamyadav02/LumiIQ_V3/compare/main...fix/phase0-findings`.
     No pull request has been opened, and nothing has been merged.
-  - `detail.md` (this file) has never been committed.
-  - **If this laptop is lost, the Phase A work is lost,** because it is not on GitHub yet.
+  - **If this laptop is lost, the Phase A and Phase B work is lost,** because it is not on GitHub yet.
 - **All seven repos are private** (section 3). Making any of them public is a separate decision.
   Check the repo contents first; the real databases and eye images are already excluded.
 - **GitHub CLI:** `gh` on this Mac has two logins. **Gautamyadav02** is the active one, and
@@ -1060,7 +1144,10 @@ separation and a data-protection review first.
 | `CHANGELOG.md` | Current; every fix, test and design decision since the audit |
 | `docs/diagnosis/phase-a.md` | Current; the Phase A diagnosis and the on-screen checks (D1–D6, M1–M3) |
 | `docs/adr/0001-caregiver-diagnostics.md` | Current; the design decisions behind the diagnostics |
-| `docs/EXPLAINED.md`, `docs/RECORDING.md`, `eval/BASELINE.md` | **Do not exist yet** (Phase 0 and Phase B) |
+| `docs/RECORDING.md` | Current; how to record evaluation sessions, step by step |
+| `docs/adr/0002-evaluation-tool.md` | Current; the design decisions behind the evaluation tool |
+| `eval/BASELINE.md` | Generated by `npm run eval:report`. **Empty until sessions are recorded** |
+| `docs/EXPLAINED.md` | **Does not exist yet** (Phase 0) |
 | `PROJECT.md` | Partly out of date (has a banner) |
 | `README_V3.md`, `SETUP_GUIDE.md`, `docs/IMPLEMENTATION_GUIDE.md` | Describe the FastAPI rebuild; **out of date**, with banners |
 | `SYSTEM_READY.md`, `IMPLEMENTATION_COMPLETE.md` | Describe the FastAPI rebuild with unsupported claims ("production-ready", accuracy percentages that were never measured). **Do not quote them** |

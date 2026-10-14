@@ -29,7 +29,7 @@ I audited the root app as the target; please confirm that choice (§9, Q1).
 - The second CI step, `validate.py`, fails because it checks the out-of-scope v3 backend.
 - The folder is not a git repository, so CI has never run.
 
-**Most important findings** (34 in total, §4):
+**Most important findings** (35 in total, §4):
 
 | ID | Finding |
 |---|---|

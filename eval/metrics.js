@@ -303,6 +303,18 @@
     return cal ? inAppFromReport(cal.report, cal.points, sessionGeometry(session)) : null;
   }
 
+  /** False activations in the rest period: all of them, and split by what caused them. */
+  function restSummary(rest) {
+    if (!rest) return { mode: null, durationMs: null, count: null, perMin: null, dwellPerMin: null, blinkPerMin: null };
+    const acts = rest.activations || [];
+    const rate = (n) => falseActivationsPerMin(n, rest.durationMs);
+    return {
+      mode: rest.mode || null, durationMs: rest.durationMs, count: acts.length, perMin: rate(acts.length),
+      dwellPerMin: rate(acts.filter((a) => a.by === 'dwell').length),
+      blinkPerMin: rate(acts.filter((a) => a.by === 'blink').length),
+    };
+  }
+
   /**
    * Everything one session measured.
    * @param {object} [o]  { gaze }: a replayed gaze track instead of the recorded one
@@ -337,9 +349,7 @@
         dwell: selectionSummary(trials.filter((t) => t.mode === 'dwell')),
         blink: selectionSummary(trials.filter((t) => t.mode === 'blink')),
       },
-      rest: rest ? { mode: rest.mode || null, durationMs: rest.durationMs, count: (rest.activations || []).length,
-                     perMin: falseActivationsPerMin((rest.activations || []).length, rest.durationMs) }
-                 : { mode: null, durationMs: null, count: null, perMin: null },
+      rest: restSummary(rest),
       lag,
     };
   }

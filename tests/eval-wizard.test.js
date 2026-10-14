@@ -166,6 +166,8 @@ test('a complete run: all ten stages in order, saved as one valid session (synth
   assert.deepEqual(blink.map((t) => t.prompted), [...w.PLAN.SELECTION_KEYS]);
   assert.ok(dwell.every((t) => t.outcome === 'correct' && t.timeMs > 1200), 'dwell: every prompt selected, none faster than the dwell time');
   assert.ok(blink.every((t) => t.outcome === 'correct'), 'blink: every prompt selected');
+  assert.ok(dwell.every((t) => t.selections.every((x) => x.by === 'dwell')), 'each selection records what made it');
+  assert.ok(blink.every((t) => t.selections.every((x) => x.by === 'blink')));
   assert.deepEqual(w.clicks, [], 'no key was really pressed, and Nurse Call never fired');
   assert.ok(s.layouts.keyboard.some((k) => k.label === 'Q') && s.layouts.keyboard.some((k) => k.label === 'nurseCallBtn'));
 
@@ -232,6 +234,7 @@ test('rest period: a selection made while resting is a false activation, and typ
   assert.equal(rest.durationMs, 8000);
   assert.ok(rest.activations.length >= 1, 'staring at a key for 8 s fires a dwell');
   assert.equal(rest.activations[0].label, 'G');
+  assert.equal(rest.activations[0].by, 'dwell');
   assert.deepEqual(w.clicks, []);
 });
 

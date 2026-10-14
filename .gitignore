@@ -10,6 +10,8 @@
 # Evaluation recordings (facial-landmark time series) — Phase 1 / Phase B
 recordings/
 eval/sessions/
+# Pipeline check written by `npm run eval:report -- --synthetic`: simulated numbers, never results.
+eval/SYNTHETIC-CHECK.md
 
 # ── Secrets and machine-local tool settings ──────────────────────────
 .env

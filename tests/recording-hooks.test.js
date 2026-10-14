@@ -76,3 +76,18 @@ test('a failing recording hook is logged and never disturbs calibration', () => 
   assert.equal(res.done, false);
   assert.equal(res.target.index, 1);
 });
+
+test('a selection says whether dwell or a blink made it', () => {
+  const dwell = setupEngine({ settings: { selectionMode: 'both', blinkSelectMs: 500 } });
+  assert.equal(dwell.gaze.lastSelectionBy, null);
+  feedFrames(dwell, 2500, EYES_OPEN);                 // rests on the key until the ring fills
+  assert.equal(dwell.fired.length, 1);
+  assert.equal(dwell.gaze.lastSelectionBy, 'dwell');
+
+  const blink = setupEngine({ settings: { selectionMode: 'blink', blinkSelectMs: 500 } });
+  feedFrames(blink, 800, EYES_OPEN);                  // rest on the key…
+  feedFrames(blink, 700, EYES_CLOSED);                // …close the eyes deliberately…
+  feedFrames(blink, 100, EYES_OPEN);                  // …and open them
+  assert.equal(blink.fired.length, 1);
+  assert.equal(blink.gaze.lastSelectionBy, 'blink');
+});

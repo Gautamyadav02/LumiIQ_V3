@@ -682,7 +682,7 @@
       if (!st.trial) return;                                    // between prompts: ignore
       const now = this.now();
       const correct = el === st.el;
-      st.trial.selections.push({ t: Math.round(now * 100) / 100, label: this._label(el), correct });
+      st.trial.selections.push({ t: Math.round(now * 100) / 100, label: this._label(el), correct, by: this.gaze.lastSelectionBy || null });
       this._flash(el);
       if (correct) this._endTrial('correct', now);
     }
@@ -716,7 +716,7 @@
     }
 
     _restActivation(el) {
-      this.st.activations.push({ t: Math.round((this.now() - this.st.t0) * 100) / 100, label: this._label(el) });
+      this.st.activations.push({ t: Math.round((this.now() - this.st.t0) * 100) / 100, label: this._label(el), by: this.gaze.lastSelectionBy || null });
       this._flash(el);
     }
 

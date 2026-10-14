@@ -473,14 +473,17 @@ test('analysis: the whole session in one call, from the recorded gaze or from a 
     rec.hideTarget();
     rec.selectionTrial({ mode: 'dwell', index: 0, prompted: 'H', promptT: 0, outcome: 'correct', timeMs: 2000, selections: [{ t: 2000, label: 'H', correct: true }] });
     rec.selectionTrial({ mode: 'blink', index: 0, prompted: 'H', promptT: 0, outcome: 'missed', timeMs: null, selections: [] });
-    rec.restResult({ mode: 'both', durationMs: 120000, activations: [{ t: 1, label: 'Q' }, { t: 2, label: 'W' }] });
+    rec.restResult({ mode: 'both', durationMs: 120000, activations: [{ t: 1, label: 'Q', by: 'dwell' }, { t: 2, label: 'W', by: 'dwell' },
+                                                                      { t: 3, label: 'E', by: 'blink' }] });
   });
   const a = M.analyseSession(s);
   assert.ok(near(a.validation.val9.standard.accuracy.px, 20));
   assert.equal(a.validation.val16.standard.targets, 0);
   assert.equal(a.selection.dwell.timeMs, 2000);
   assert.equal(a.selection.blink.missedPct, 100);
-  assert.equal(a.rest.perMin, 1);
+  assert.equal(a.rest.perMin, 1.5);                       // 3 activations in 2 minutes
+  assert.equal(a.rest.dwellPerMin, 1);                    // 2 of them by dwell
+  assert.equal(a.rest.blinkPerMin, 0.5);                  // 1 by blink
   // The same analysis on another gaze track (what the replay produces): 50 px off instead of 20.
   const replayed = s.frames.map(() => ({ x: 550, y: 500 }));
   assert.ok(near(M.analyseSession(s, { gaze: replayed }).validation.val9.standard.accuracy.px, 50));

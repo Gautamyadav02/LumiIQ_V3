@@ -106,6 +106,10 @@ const LumiGaze = {
     onCalibrationClear: null,    // () the current calibration point's samples were discarded
     onCalibrationPoint: null,    // ({index, total, target, samples, accepted, rejected}) a point was committed
 
+    // What made the most recent selection: 'dwell' or 'blink' (null before the first).
+    // Set just before onDwellClick is called; nothing in the pipeline reads it.
+    lastSelectionBy: null,
+
     // true while an evaluation session is recording: each frame record then also
     // carries the landmarks (GazeFeatures.pack) and the head matrix. Never images.
     captureRaw: false,
@@ -198,6 +202,7 @@ const LumiGaze = {
             onProgress: (el, p) => { if (this.onDwellProgress) this.onDwellProgress(el, p); },
             onActivate: (el) => {
                 this._noteSleepSelection(el);
+                this.lastSelectionBy = 'dwell';
                 if (this.onDwellClick) this.onDwellClick(el);
             }
         });
@@ -623,6 +628,7 @@ const LumiGaze = {
         if (!target || !this.isCalibrated || this.isCalibrating || target.isConnected === false) return;
         this.dwell.markActivated(target, now);   // so dwell does not click it again at once
         this._noteSleepSelection(target);
+        this.lastSelectionBy = 'blink';
         if (this.onDwellClick) this.onDwellClick(target);
     },
 

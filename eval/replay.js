@@ -58,6 +58,7 @@ const DEFAULTS = {
   features: null,       // options for GazeFeatures.extract
   calibration: null,    // options for GazeCalibration
   stabilizer: null,     // options for GazeStabilizer
+  m1: true,             // also replay with the other cross-validation method (AUDIT M1); costs a second replay
 };
 
 /** The Phase C switches a session was recorded with (none for a session from before Phase C). */
@@ -359,7 +360,7 @@ function replaySession(session, options = {}) {
   // the error actually measured on the held-out targets with that model.
   const m1 = {};
   for (const [name, set] of [['cal9', 'val9'], ['cal16', 'val16']]) {
-    if (!run.calibrations[name]) continue;
+    if (!opts.m1 || !run.calibrations[name]) continue;
     m1[name] = {};
     for (const cv of ['loto', 'interleaved']) {
       const other = cv === opts.cv ? run : replayGaze(session, resolve(session, { ...options, cv }));

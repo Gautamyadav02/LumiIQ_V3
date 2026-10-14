@@ -74,6 +74,12 @@ const table = (head, rows) => [`| ${head.join(' | ')} |`, `|${head.map(() => '--
 const count = (cells) => { const ns = [...new Set(cells.map((c) => c.n))]; return ns.length === 1 ? String(ns[0]) : cells.map((c) => c.n).join(' / '); };
 const idsOf = (cells) => [...new Set(cells.flatMap((c) => c.ids))];
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** The Phase C improvements a session was recorded with, as text: none, C1–C7, or a list. */
+function improvementsOn(session) {
+  const flags = Replay.recordedFlags(session);
+  const on = Object.keys(flags).filter((n) => flags[n]);
+  return on.length === 0 ? 'none' : on.length === Object.keys(flags).length ? 'C1–C7' : on.join(', ');
+}
 
 // ── The report ───────────────────────────────────────────────────────
 
@@ -132,13 +138,20 @@ function buildReport(sessions, o = {}) {
     for (const s of used) { const l = (s.setup && s.setup.lighting) || 'not stated'; lighting[l] = (lighting[l] || 0) + 1; }
     p(`${plural(used.length, 'session')} on ${plural(days.size, 'day')}. Lighting: ${Object.entries(lighting).map(([k, v]) => `${k}: ${v}`).join(', ')}.`);
     if (used.length < 3) p('> Fewer than 3 sessions: the mean and SD below say little yet. The protocol asks for at least 3 per condition.');
-    p(table(['Session', 'Recorded (UTC)', 'Lighting', 'Distance', 'Screen', 'Replay check'], used.map((s) => {
+    p(table(['Session', 'Recorded (UTC)', 'Lighting', 'Distance', 'Screen', 'Replay check', 'Improvements on'], used.map((s) => {
       const r = results.find((x) => x.id === s.id);
       const c = r.checks;
       const check = c.gazeFrames ? `model within ${c.rawMaxDiffPx.toFixed(2)} px, gaze within ${c.gazeMaxDiffPx.toFixed(1)} px of live` : 'no calibrated frames';
       return [`\`${s.id}\``, String(s.createdAt).slice(0, 16).replace('T', ' '), (s.setup && s.setup.lighting) || 'not stated',
-              `${s.setup.distanceCm} cm`, `${s.setup.screenWidthCm} cm (${s.screen.width}×${s.screen.height} px)`, check];
+              `${s.setup.distanceCm} cm`, `${s.setup.screenWidthCm} cm (${s.screen.width}×${s.screen.height} px)`, check,
+              improvementsOn(s)];
     })));
+    const improved = used.filter((s) => improvementsOn(s) !== 'none');
+    if (improved.length) {
+      p(`> **${plural(improved.length, 'session')} ${improved.length === 1 ? 'was' : 'were'} recorded with Phase C improvements on** (last column).`,
+        '> The tables below describe the app as recorded, so they are not the Phase B baseline. The baseline is',
+        '> recorded on branch `phase-b-eval`; `npm run eval:ablation` compares each improvement with it by replay.');
+    }
   }
   if (leftOut) p(`> ${plural(leftOut, 'session')} marked synthetic ${leftOut === 1 ? 'was' : 'were'} left out: generated sessions are never results.`);
   if (o.skipped && o.skipped.length) {
@@ -319,4 +332,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => process.exit(code), (err) => { console.error(err.message); process.exit(1); });
 }
 
-module.exports = { buildReport, loadSessions, simulateSessions, BASELINE_FILE, SYNTHETIC_FILE, SESSIONS_DIR };
+module.exports = { buildReport, loadSessions, simulateSessions, codeVersion, BASELINE_FILE, SYNTHETIC_FILE, SESSIONS_DIR };

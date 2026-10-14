@@ -12,6 +12,7 @@ recordings/
 eval/sessions/
 # Pipeline check written by `npm run eval:report -- --synthetic`: simulated numbers, never results.
 eval/SYNTHETIC-CHECK.md
+eval/SYNTHETIC-ABLATION.md
 
 # ── Secrets and machine-local tool settings ──────────────────────────
 .env

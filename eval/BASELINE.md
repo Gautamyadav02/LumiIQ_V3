@@ -2,7 +2,7 @@
 
 Written by `npm run eval:report` from the sessions in `eval/sessions/`. Do not edit by hand: run the command again.
 
-*Generated 2026-10-14T03:51:46.166Z · code: commit 3af9b4b on phase-b-eval, with uncommitted changes*
+*Generated 2026-10-14T09:40:26.709Z · code: commit 585eb8b on phase-c-gaze, with uncommitted changes*
 
 **How to read the numbers**
 - Every figure is computed by code from recorded sessions. A figure no session provides is shown as "—".

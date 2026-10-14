@@ -127,6 +127,19 @@ test('the report names its sessions: ids per row, dates, distance, screen and li
   for (const row of used) for (const s of sessions) assert.ok(row[1].includes(s.id), `${row[0]} lists ${s.id}`);
 });
 
+test('Phase C: each session says which improvements it was recorded with, and the report warns that those are not the baseline', async () => {
+  const on = await simulated(1);                          // recorded on phase-c-gaze: C1–C7 on
+  const before = await simulated(2);
+  const off = { ...before, id: `${before.id}-phaseb`, engine: { ...before.engine, flags: {} } };   // as recorded on phase-b-eval
+  const md = report([on, off]);
+  const list = tableAfter(md, 'Sessions');
+  assert.deepEqual(list.map((r) => r.at(-1)), ['C1–C7', 'none']);
+  assert.match(md, /1 session was recorded with Phase C improvements on/);
+  assert.match(md, /not the Phase B baseline/);
+  assert.match(md, /eval:ablation/);
+  assert.doesNotMatch(report([off]), /recorded with Phase C improvements on/, 'no warning for baseline sessions');
+});
+
 test('the 95th-percentile error and the smallest target it allows', async () => {
   const sessions = [await simulated(1), await simulated(2)];
   const md = report(sessions);

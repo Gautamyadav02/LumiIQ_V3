@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "node gaze/test_gaze.js && node gaze/_smoke.js && node --test tests/*.test.js gaze/test_drift.js gaze/test_confidence.js && python3 -m unittest discover -s tests -p 'test_*.py'",
-    "eval:report": "node eval/report.js"
+    "eval:report": "node eval/report.js",
+    "eval:ablation": "node eval/ablation.js"
   },
   "keywords": [],
   "author": "",

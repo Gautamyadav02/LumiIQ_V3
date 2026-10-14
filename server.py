@@ -18,6 +18,7 @@ API (requests that write must send Content-Type: application/json):
     PUT    /api/settings               -> validate, merge + save settings
     GET    /api/calibration            -> calibration object | null
     PUT    /api/calibration            -> validate + save calibration
+    POST   /api/eval/session           -> save one evaluation session to eval/sessions/
     GET    /api/logs                   -> { typed:[], symptom:[], alert:[] }
     POST   /api/logs/typed   {text, timestamp?}
     POST   /api/logs/symptom {bodyPart, symptom, timestamp?}
@@ -61,6 +62,15 @@ log = logging.getLogger("lumiiq")
 _DB_LOCK = threading.Lock()
 
 MAX_BODY_BYTES = 256 * 1024   # a saved calibration is ~9 KB
+
+# Evaluation sessions (eval/session-recorder.js) are saved as one JSON file each.
+# A ten-minute session at 30 frames/s is roughly 10-15 MB, so this one endpoint
+# has its own limit. The folder is gitignored and is never served back.
+MAX_SESSION_BYTES = 64 * 1024 * 1024
+SESSIONS_DIR = os.environ.get("LUMIIQ_SESSIONS", os.path.join(BASE_DIR, "eval", "sessions"))
+SESSION_FORMAT, SESSION_VERSION = "lumiiq-eval-session", 2
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+SESSION_MAX_TEXT = 300        # no text field in a session may be longer
 
 # The only settings the server stores, with the values each may take.
 # kind "number" -> (min, max); "choice" -> allowed values; "bool" -> True/False.
@@ -113,10 +123,11 @@ STATIC_FILES = {
     "/", "/index.html", "/styles.css", "/manifest.json", "/sw.js", "/favicon.ico",
     "/app.js", "/database.js", "/dictionary.js", "/voice.js", "/gaze-engine.js",
     "/keyboard.js", "/body-map.js", "/phrases.js", "/diagnostics.js",
+    # Only the evaluation scripts the page loads; never eval/sessions/ or the Node tools.
+    "/eval/metrics.js", "/eval/session-recorder.js", "/eval/eval-wizard.js",
 }
 STATIC_DIRS = {
     "/gaze/": {".js"},
-    "/eval/": {".js"},
     "/lib/mediapipe/": {".js", ".mjs", ".cjs", ".wasm", ".map"},
     "/models/": {".task"},
     "/icons/": {".png"},
@@ -393,6 +404,80 @@ def clear_logs():
 
 
 # ───────────────────────────────────────────────────────────
+#  EVALUATION SESSIONS
+# ───────────────────────────────────────────────────────────
+def _numbers_or_none(values):
+    return isinstance(values, list) and all(
+        v is None or (_is_number(v) and math.isfinite(v)) for v in values)
+
+
+def _scan_text(value, where):
+    """Refuse long or image-like text anywhere: a session holds numbers and short labels only."""
+    if isinstance(value, str):
+        if len(value) > SESSION_MAX_TEXT:
+            raise ValidationError(f"text at {where} is longer than {SESSION_MAX_TEXT} characters")
+        low = value.lower()
+        if low.startswith("data:") or ";base64," in low:
+            raise ValidationError(f"text at {where} looks like an image or file")
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            if isinstance(item, (str, list, dict)):
+                _scan_text(item, f"{where}[{i}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _scan_text(str(key), f"{where} key")
+            _scan_text(item, f"{where}.{key}")
+
+
+def validate_session(session):
+    """The same checks as SessionRecorder.validate() in eval/session-recorder.js."""
+    if not isinstance(session, dict):
+        raise ValidationError("a session must be a JSON object")
+    if session.get("format") != SESSION_FORMAT:
+        raise ValidationError(f'format must be "{SESSION_FORMAT}"')
+    if session.get("version") != SESSION_VERSION or isinstance(session.get("version"), bool):
+        raise ValidationError(f"version must be {SESSION_VERSION}")
+    sid = session.get("id")
+    if not isinstance(sid, str) or not SESSION_ID_RE.match(sid):
+        raise ValidationError('id must be 8-64 letters, digits, "-" or "_"')
+    consent = session.get("consent")
+    if not isinstance(consent, dict) or consent.get("given") is not True:
+        raise ValidationError("consent was not given: the session is not saved")
+    fields, frames = session.get("frameFields"), session.get("frames")
+    if not isinstance(fields, list) or not isinstance(frames, list):
+        raise ValidationError("frames are missing")
+    for i, frame in enumerate(frames):
+        if not _numbers_or_none(frame) or len(frame) != len(fields):
+            raise ValidationError(f"frame {i} is not a row of {len(fields)} numbers")
+    for key in ("landmarks", "matrices"):
+        rows = session.get(key)
+        if not isinstance(rows, list):
+            raise ValidationError(f"{key} are missing")
+        for i, row in enumerate(rows):
+            if row is not None and not _numbers_or_none(row):
+                raise ValidationError(f"{key}[{i}] is not a list of numbers")
+    for key, value in session.items():
+        if key not in ("frames", "landmarks", "matrices"):
+            _scan_text(value, key)
+    return session
+
+
+def save_session(session):
+    validate_session(session)
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    name = session["id"] + ".json"
+    path = os.path.join(SESSIONS_DIR, name)
+    body = json.dumps(session, separators=(",", ":"))
+    try:
+        with open(path, "x", encoding="utf-8") as fh:     # "x": fail rather than overwrite
+            fh.write(body)
+    except FileExistsError:
+        raise _HttpError(409, "a session with this id is already saved") from None
+    log.info("evaluation session saved: %s (%d bytes)", name, len(body))
+    return {"file": f"eval/sessions/{name}", "bytes": len(body)}
+
+
+# ───────────────────────────────────────────────────────────
 #  HTTP HANDLER
 # ───────────────────────────────────────────────────────────
 def _is_loopback(host):
@@ -449,13 +534,13 @@ class LumiIQHandler(SimpleHTTPRequestHandler):
         name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
         return name in {"localhost", "127.0.0.1", "[::1]"}
 
-    def _read_json(self):
-        """Parse a JSON request body, or raise _HttpError."""
+    def _read_json(self, limit):
+        """Parse a JSON request body of at most `limit` bytes, or raise _HttpError."""
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             raise _HttpError(400, "invalid Content-Length") from None
-        if length > MAX_BODY_BYTES:
+        if length > limit:
             self._discard_body(length)
             raise _HttpError(413, "request body too large")
         # Read the body before any other check: closing a connection with unread
@@ -524,7 +609,8 @@ class LumiIQHandler(SimpleHTTPRequestHandler):
     # ---- API routing ----------------------------------------------
     def _api(self, method, path):
         try:
-            data = self._read_json() if method in ("POST", "PUT") else None
+            limit = MAX_SESSION_BYTES if path == "/api/eval/session" else MAX_BODY_BYTES
+            data = self._read_json(limit) if method in ("POST", "PUT") else None
             if method == "POST" and not isinstance(data, dict):
                 raise ValidationError("body must be a JSON object")
             route = ROUTES.get((method, path))
@@ -562,6 +648,7 @@ ROUTES = {
     ("POST", "/api/logs/symptom"): lambda d: (201, add_symptom(d)),
     ("POST", "/api/logs/alert"):   lambda d: (201, add_alert(d)),
     ("DELETE", "/api/logs"):     lambda _: (200, clear_logs()),
+    ("POST", "/api/eval/session"): lambda d: (201, save_session(d)),
 }
 
 
@@ -575,15 +662,19 @@ def parse_args(argv=None):
                         help="interface to listen on (default 127.0.0.1: this computer only)")
     parser.add_argument("--db", default=None,
                         help="SQLite file (default: $LUMIIQ_DB, else lumiiq.db next to server.py)")
+    parser.add_argument("--sessions", default=None,
+                        help="folder for evaluation sessions (default: $LUMIIQ_SESSIONS, else eval/sessions)")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
-    global DB_PATH
+    global DB_PATH, SESSIONS_DIR
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="[LumiIQ] %(levelname)s %(message)s")
     if args.db:
         DB_PATH = args.db
+    if args.sessions:
+        SESSIONS_DIR = args.sessions
     init_db()
     if not _is_loopback(args.host):
         log.warning("Listening on %s: other devices on the network can reach this server, "

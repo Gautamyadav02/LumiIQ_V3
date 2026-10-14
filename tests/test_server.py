@@ -226,5 +226,134 @@ class CalibrationTests(ServerCase):
                 self.assertEqual(self.json_request("PUT", "/api/calibration", body)[0], 400)
 
 
+def eval_session(**changes):
+    """A minimal valid evaluation session (format v2, as eval/session-recorder.js writes it)."""
+    session = {
+        "format": "lumiiq-eval-session", "version": 2, "id": "2026-10-14T09-00-00Z-ab12",
+        "createdAt": "2026-10-14T09:00:00.000Z", "finishedAt": "2026-10-14T09:10:00.000Z",
+        "consent": {"given": True, "at": "2026-10-14T09:00:00.000Z"},
+        "setup": {"distanceCm": 60, "screenWidthCm": 30.5, "lighting": "daylight", "note": ""},
+        "screen": {"width": 1440, "height": 900, "dpr": 2},
+        "frameFields": ["t", "face", "f0"],
+        "frames": [[33.3, 1, 0.5], [66.6, 0, None]],
+        "landmarks": [[0.4, 0.45, -0.01], None],
+        "matrices": [[1, 0, 0, 0], None],
+        "phases": [], "targets": [], "calibrations": [], "layouts": {}, "selections": [],
+        "rest": None, "events": [], "summary": None,
+    }
+    session.update(changes)
+    return session
+
+
+class EvalSessionTests(ServerCase):
+    """POST /api/eval/session: the evaluation wizard saves a session into eval/sessions/."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._sessions = tempfile.TemporaryDirectory()
+        cls._old_dir, cls._old_limit = server.SESSIONS_DIR, server.MAX_SESSION_BYTES
+        server.SESSIONS_DIR = cls._sessions.name
+
+    @classmethod
+    def tearDownClass(cls):
+        server.SESSIONS_DIR, server.MAX_SESSION_BYTES = cls._old_dir, cls._old_limit
+        cls._sessions.cleanup()
+        super().tearDownClass()
+
+    def setUp(self):
+        server.MAX_SESSION_BYTES = self._old_limit
+        for name in os.listdir(self._sessions.name):
+            os.remove(os.path.join(self._sessions.name, name))
+
+    def saved(self):
+        return sorted(os.listdir(self._sessions.name))
+
+    def test_a_valid_session_is_written_as_id_json(self):
+        session = eval_session()
+        status, reply = self.json_request("POST", "/api/eval/session", session)
+        self.assertEqual(status, 201)
+        self.assertEqual(reply["file"], "eval/sessions/2026-10-14T09-00-00Z-ab12.json")
+        self.assertEqual(self.saved(), ["2026-10-14T09-00-00Z-ab12.json"])
+        with open(os.path.join(self._sessions.name, self.saved()[0]), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh), session)
+
+    def test_a_session_without_consent_is_refused(self):
+        for consent in [{"given": False}, {}, None, {"given": "yes"}]:
+            with self.subTest(consent=consent):
+                status, reply = self.json_request("POST", "/api/eval/session", eval_session(consent=consent))
+                self.assertEqual(status, 400)
+                self.assertIn("consent", reply["error"])
+        self.assertEqual(self.saved(), [])
+
+    def test_the_id_cannot_be_used_to_write_elsewhere(self):
+        for bad in ["../../evil", "a/b", "..", "", "x" * 80, "has space", None, 7]:
+            with self.subTest(id=bad):
+                self.assertEqual(self.json_request("POST", "/api/eval/session", eval_session(id=bad))[0], 400)
+        self.assertEqual(self.saved(), [])
+
+    def test_other_formats_and_non_numeric_frames_are_refused(self):
+        for bad in [{"format": "other"}, {"version": 1}, {"frames": [["x", 1, 2]]}, {"frames": "none"},
+                    {"frames": [[1, 2]]}, {"landmarks": [["a"]]}, {"matrices": [{"x": 1}]}]:
+            with self.subTest(bad=bad):
+                self.assertEqual(self.json_request("POST", "/api/eval/session", eval_session(**bad))[0], 400)
+        self.assertEqual(self.saved(), [])
+
+    def test_long_or_image_like_text_is_refused(self):
+        for bad in [{"setup": {"note": "data:image/png;base64,AAAA"}},
+                    {"events": [{"t": 1, "name": "n", "data": {"blob": "z" * 400}}]},
+                    {"summary": {"video": "x;base64,QUJD"}}]:
+            with self.subTest(bad=list(bad)):
+                status, reply = self.json_request("POST", "/api/eval/session", eval_session(**bad))
+                self.assertEqual(status, 400)
+                self.assertIn("text", reply["error"])
+        self.assertEqual(self.saved(), [])
+
+    def test_a_saved_session_is_never_overwritten(self):
+        self.assertEqual(self.json_request("POST", "/api/eval/session", eval_session())[0], 201)
+        status, reply = self.json_request("POST", "/api/eval/session", eval_session(setup={"note": "second"}))
+        self.assertEqual(status, 409)
+        with open(os.path.join(self._sessions.name, self.saved()[0]), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["setup"]["note"], "")
+
+    def test_it_has_its_own_size_limit_larger_than_the_other_endpoints(self):
+        big = eval_session(frames=[[float(i), 1, 0.5] for i in range(40000)])     # about 600 KB
+        self.assertGreater(len(json.dumps(big)), server.MAX_BODY_BYTES)
+        self.assertEqual(self.json_request("POST", "/api/eval/session", big)[0], 201)
+        # The ordinary endpoints keep their 256 KB limit.
+        self.assertEqual(self.json_request("POST", "/api/logs/typed", {"text": "x" * 300000})[0], 413)
+
+    def test_a_session_over_its_own_limit_is_refused(self):
+        server.MAX_SESSION_BYTES = 200 * 1024
+        big = eval_session(frames=[[float(i), 1, 0.5] for i in range(40000)])
+        self.assertEqual(self.json_request("POST", "/api/eval/session", big)[0], 413)
+        self.assertEqual(self.saved(), [])
+        self.assertEqual(self.request("GET", "/api/health")[0], 200, "server still healthy")
+
+    def test_saved_sessions_are_never_served(self):
+        self.assertEqual(self.json_request("POST", "/api/eval/session", eval_session())[0], 201)
+        for path in ["/eval/sessions/2026-10-14T09-00-00Z-ab12.json", "/eval/sessions/", "/api/eval/session",
+                     "/api/eval/sessions"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.request("GET", path)[0], 404)
+
+    def test_it_must_be_json_and_addressed_to_this_computer(self):
+        body = json.dumps(eval_session())
+        self.assertEqual(self.request("POST", "/api/eval/session", body, headers={"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.request("POST", "/api/eval/session", body, host="evil.example")[0], 403)
+        self.assertEqual(self.saved(), [])
+
+
+class EvalStaticFileTests(ServerCase):
+    def test_only_the_browser_side_evaluation_scripts_are_served(self):
+        for path in ["/eval/metrics.js", "/eval/session-recorder.js", "/eval/eval-wizard.js"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.request("GET", path)[0], 200)
+        for path in ["/eval/replay.js", "/eval/report.js", "/eval/BASELINE.md", "/eval/synthetic/ear-threshold.js",
+                     "/eval/", "/eval/sessions/"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.request("GET", path)[0], 404)
+
+
 if __name__ == "__main__":
     unittest.main()

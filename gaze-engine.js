@@ -405,6 +405,7 @@ const LumiGaze = {
             t: performance.now(), face: true, eyes, pose: { yaw, pitch, roll },
             confidence: this.lastConfidence, eyeMode: fx.eyeMode, earThreshold: settings.earThreshold,
             raw: fx.rawRatios || null,   // iris-in-eye ratio of the eyes in use (features' average)
+            features: fx.features ? Array.from(fx.features) : null,
         };
     },
 

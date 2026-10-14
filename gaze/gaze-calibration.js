@@ -117,6 +117,7 @@
       this.trainX = [];        // retained feature rows across all targets
       this.trainYx = [];
       this.trainYy = [];
+      this.trainTargetIndices = [];
       this.modelX = null;
       this.modelY = null;
       this.report = null;
@@ -172,6 +173,7 @@
         this.trainX.push(f);
         this.trainYx.push(target.x);
         this.trainYy.push(target.y);
+        this.trainTargetIndices.push(this.index);
       }
       this.pointBuffer = [];
       this._pointStartTime = null;
@@ -194,16 +196,22 @@
       if (this.trainX.length < 10) {
         return { ok: false, reason: 'insufficient_samples', samples: this.trainX.length };
       }
-      const selX = RMath.selectLambda(this.trainX, this.trainYx, this.degree);
-      const selY = RMath.selectLambda(this.trainX, this.trainYy, this.degree);
+      const targets = (this.trainTargetIndices && this.trainTargetIndices.length === this.trainX.length)
+        ? this.trainTargetIndices : null;
+      const selX = RMath.selectLambda(this.trainX, this.trainYx, this.degree, undefined, targets);
+      const selY = RMath.selectLambda(this.trainX, this.trainYy, this.degree, undefined, targets);
 
       this.modelX = new Ridge({ degree: this.degree, lambda: selX.lambda }).fit(this.trainX, this.trainYx);
       this.modelY = new Ridge({ degree: this.degree, lambda: selY.lambda }).fit(this.trainX, this.trainYy);
 
-      // Cross-validated metrics. Optimistic when frames of one target fall in both
-      // training and test folds (AUDIT M1) — not a measurement of real accuracy.
-      const cvX = RMath.crossValR2(this.trainX, this.trainYx, { degree: this.degree, lambda: selX.lambda });
-      const cvY = RMath.crossValR2(this.trainX, this.trainYy, { degree: this.degree, lambda: selY.lambda });
+      // Leave-one-target-out metrics (AUDIT M1). Groups frames of the same target
+      // so calibration targets are never leaked between train and test folds.
+      const cvX = targets && RMath.crossValLOTO
+        ? RMath.crossValLOTO(this.trainX, this.trainYx, targets, { degree: this.degree, lambda: selX.lambda })
+        : RMath.crossValR2(this.trainX, this.trainYx, { degree: this.degree, lambda: selX.lambda });
+      const cvY = targets && RMath.crossValLOTO
+        ? RMath.crossValLOTO(this.trainX, this.trainYy, targets, { degree: this.degree, lambda: selY.lambda })
+        : RMath.crossValR2(this.trainX, this.trainYy, { degree: this.degree, lambda: selY.lambda });
       const r2 = (cvX.r2 + cvY.r2) / 2;
 
       const w = screen && screen.width ? screen.width : 1920;
@@ -223,6 +231,7 @@
         rating: ratingFor(r2),
         lambdaX: selX.lambda,
         lambdaY: selY.lambda,
+        cvMethod: targets ? 'loto' : 'kfold',
       };
       this.isReady = true;
       return this.report;

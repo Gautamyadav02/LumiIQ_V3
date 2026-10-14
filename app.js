@@ -48,6 +48,7 @@ const EyeApp = {
         this._bindSleepMode();
         this._bindResetSettings();
         this._bindDiagnostics();
+        this._bindEvalWizard();
         this.updatePill('Disconnected', '');
 
         // Wire up gaze engine callbacks
@@ -178,6 +179,10 @@ const EyeApp = {
         // Visual pulse feedback
         el.classList.add('dwell-fired');
         setTimeout(() => el.classList.remove('dwell-fired'), 300);
+
+        if (typeof LumiEvalWizard !== 'undefined' && LumiEvalWizard.active) {
+            LumiEvalWizard.noteActivation(el);
+        }
 
         // Calculate drift
         const rect = el.getBoundingClientRect();
@@ -403,6 +408,10 @@ const EyeApp = {
                 this._holdPill(`Calibrated ✓ ${LumiGaze.calibration.report.rating}`, 'active', 4000);
             } else {
                 this.updatePill(LumiGaze.isCalibrated ? 'Previous calibration in use' : 'Not calibrated', '');
+            }
+            if (this._evalWaitingForCalib && typeof LumiEvalWizard !== 'undefined') {
+                this._evalWaitingForCalib = false;
+                LumiEvalWizard.startValidation();
             }
         });
 
@@ -674,6 +683,18 @@ const EyeApp = {
             if (performance.now() - this._statsShownAt >= 1000) this._showStats();
         }
         if (this._earCheck) this._earCheck.add(info, performance.now());
+        if (typeof LumiEvalWizard !== 'undefined' && LumiEvalWizard.active && LumiEvalWizard.recorder && LumiEvalWizard.recorder.isRecording) {
+            LumiEvalWizard.recorder.recordFrame({
+                t: info.t,
+                features: info.features,
+                confidence: info.confidence,
+                earL: info.eyes && info.eyes[0] ? info.eyes[0].ear : 0,
+                earR: info.eyes && info.eyes[1] ? info.eyes[1].ear : 0,
+                pose: info.pose,
+                predRaw: info.raw,
+                predStabilized: info.gaze,
+            });
+        }
         this._drawFeed(info);
     },
 
@@ -800,6 +821,73 @@ const EyeApp = {
         const threshold = LumiStore.getSettings().earThreshold;
         if (out) out.textContent = 'Measured just now (live):\n' +
             LumiDiagnostics.EarCheck.describe(check.result(threshold), threshold).join('\n');
+    },
+
+    _bindEvalWizard() {
+        document.getElementById('launchEvalWizardBtn')?.addEventListener('click', () => {
+            if (!LumiGaze.isTracking) {
+                this._showNotice('Start the gaze camera first: the evaluation wizard needs the live camera.', 'warning');
+                return;
+            }
+            if (typeof LumiEvalWizard !== 'undefined') {
+                LumiEvalWizard.launch();
+            }
+        });
+
+        document.getElementById('startEvalWizardProgressBtn')?.addEventListener('click', () => {
+            const consent = document.getElementById('evalConsentCheckbox')?.checked;
+            const distCm = parseFloat(document.getElementById('evalDistanceCm')?.value || 50);
+            const widthCm = parseFloat(document.getElementById('evalWidthCm')?.value || 34.4);
+            const condition = document.getElementById('evalCondition')?.value || 'baseline';
+
+            if (typeof LumiEvalWizard !== 'undefined') {
+                LumiEvalWizard.startSession({
+                    consent,
+                    distanceMm: distCm * 10,
+                    screenWidthMm: widthCm * 10,
+                    condition,
+                });
+            }
+        });
+
+        document.getElementById('exitEvalIntroBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.exit();
+        });
+
+        document.getElementById('evalStartCalibBtn')?.addEventListener('click', () => {
+            const overlay = document.getElementById('evalOverlay');
+            if (overlay) overlay.classList.add('hidden');
+            this._evalWaitingForCalib = true;
+            this._startCalib();
+        });
+
+        document.getElementById('evalSkipCalibBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.startValidation();
+        });
+
+        document.getElementById('exitEvalValBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.exit();
+        });
+
+        document.getElementById('evalStartHeadBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.startHeadMovementTest();
+        });
+
+        document.getElementById('exitEvalHeadBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.exit();
+        });
+
+        document.getElementById('evalSkipRestBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.finishEvaluation();
+        });
+
+        document.getElementById('evalDownloadJsonBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.downloadSession();
+        });
+
+        document.getElementById('evalCloseSummaryBtn')?.addEventListener('click', () => {
+            if (typeof LumiEvalWizard !== 'undefined') LumiEvalWizard.exit();
+        });
     }
 };
 

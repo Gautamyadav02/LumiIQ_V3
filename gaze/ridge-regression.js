@@ -328,11 +328,55 @@
     return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll) };
   }
 
+  /**
+   * Leave-one-target-out (LOTO) cross-validation for a grouped dataset (AUDIT M1).
+   * Target indices (e.g. 0..K-1 for K targets) partition samples into groups;
+   * each fold trains on all targets except one and evaluates on the held-out target.
+   * This prevents leaking correlated frames of the same target between train and test.
+   */
+  function crossValLOTO(X, y, targetIndices, opts = {}) {
+    const n = X.length;
+    if (!targetIndices || targetIndices.length !== n) {
+      return crossValR2(X, y, opts, 5);
+    }
+    const uniqueTargets = Array.from(new Set(targetIndices));
+    if (uniqueTargets.length < 2) {
+      return crossValR2(X, y, opts, 2);
+    }
+
+    const yTrueAll = [];
+    const yPredAll = [];
+
+    for (let t = 0; t < uniqueTargets.length; t++) {
+      const heldOut = uniqueTargets[t];
+      const Xtr = [], ytr = [], Xte = [], yte = [];
+      for (let i = 0; i < n; i++) {
+        if (targetIndices[i] === heldOut) {
+          Xte.push(X[i]);
+          yte.push(y[i]);
+        } else {
+          Xtr.push(X[i]);
+          ytr.push(y[i]);
+        }
+      }
+      if (Xtr.length < 3 || Xte.length === 0) continue;
+      const model = new RidgeRegressor(opts).fit(Xtr, ytr);
+      const pred = model.predict(Xte);
+      for (let i = 0; i < yte.length; i++) {
+        yTrueAll.push(yte[i]);
+        yPredAll.push(pred[i]);
+      }
+    }
+    if (yTrueAll.length === 0) return { r2: 0, rmse: 1 };
+    return { r2: r2Score(yTrueAll, yPredAll), rmse: rmse(yTrueAll, yPredAll) };
+  }
+
   /** Pick the lambda from a grid that maximizes cross-validated R². */
-  function selectLambda(X, y, degree = 2, grid = [0.01, 0.05, 0.2, 1.0, 5.0, 20.0]) {
+  function selectLambda(X, y, degree = 2, grid = [0.01, 0.05, 0.2, 1.0, 5.0, 20.0], targetIndices = null) {
     let best = { lambda: grid[0], r2: -Infinity, rmse: Infinity };
+    const cvFn = (opts) => targetIndices ? crossValLOTO(X, y, targetIndices, opts) : crossValR2(X, y, opts);
     for (const lambda of grid) {
-      const { r2, rmse: e } = crossValR2(X, y, { degree, lambda });
+      const { r2, rmse: e } = cvFn({ degree, lambda });
       if (r2 > best.r2) best = { lambda, r2, rmse: e };
     }
     return best;
@@ -348,6 +392,7 @@
     r2Score,
     rmse,
     crossValR2,
+    crossValLOTO,
     selectLambda,
   };
   root.RidgeRegressor = RidgeRegressor;

@@ -6,7 +6,7 @@
 // (The previous cache-first handler never revalidated, so after a code change
 // browsers kept running the old JavaScript — AUDIT M12.) API requests are
 // never cached. Bump CACHE_NAME when the ASSETS list changes.
-const CACHE_NAME = 'lumiiq-v5';
+const CACHE_NAME = 'lumiiq-v6';
 const ASSETS = [
     '/',
     '/index.html',
@@ -19,6 +19,9 @@ const ASSETS = [
     '/database.js',
     '/phrases.js',
     '/diagnostics.js',
+    '/eval/metrics.js',
+    '/eval/session-recorder.js',
+    '/eval/eval-wizard.js',
     '/gaze-engine.js',
     '/gaze/one-euro-filter.js',
     '/gaze/ridge-regression.js',

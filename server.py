@@ -116,6 +116,7 @@ STATIC_FILES = {
 }
 STATIC_DIRS = {
     "/gaze/": {".js"},
+    "/eval/": {".js"},
     "/lib/mediapipe/": {".js", ".mjs", ".cjs", ".wasm", ".map"},
     "/models/": {".task"},
     "/icons/": {".png"},

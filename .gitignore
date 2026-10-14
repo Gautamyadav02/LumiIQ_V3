@@ -7,8 +7,9 @@
 *.db-journal
 *.sqlite
 *.sqlite3
-# Evaluation recordings (facial-landmark time series) — Phase 1
+# Evaluation recordings (facial-landmark time series) — Phase 1 / Phase B
 recordings/
+eval/sessions/
 
 # ── Secrets and machine-local tool settings ──────────────────────────
 .env

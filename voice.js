@@ -32,7 +32,9 @@ const LumiVoice = {
      *   1. an on-device voice (localService) for the exact locale, e.g. en-GB
      *   2. an on-device voice for the same language, e.g. any English
      *   3. an online voice for the locale / language (better than silence)
-     * Among on-device voices, "Premium/Enhanced/Natural/Neural" ones are preferred.
+     * Within each, voices are ranked by clarity (_clarity): "Premium/Enhanced/Natural/Neural"
+     * first, then known clear voices, then the rest. Novelty voices come last, used only
+     * when nothing else speaks the language.
      */
     _pickVoice(lang) {
         if (!this._voices.length) {
@@ -45,12 +47,26 @@ const LumiVoice = {
         const voiceLang = v => (v.lang || '').toLowerCase().replace('_', '-');
         const exact = v => voiceLang(v) === want;
         const sameLanguage = v => voiceLang(v).startsWith(base);
-        const best = list => list.find(v => /premium|enhanced|natural|neural/i.test(v.name)) || list[0];
+        const best = list => list.reduce((a, v) => (a && this._clarity(a) <= this._clarity(v) ? a : v), null);
 
         const local = this._voices.filter(v => v.localService);
         return best(local.filter(exact)) || best(local.filter(sameLanguage))
             || this._voices.find(exact) || this._voices.find(sameLanguage)
             || local[0] || this._voices[0] || null;
+    },
+
+    // macOS lists novelty and old robotic voices as ordinary on-device voices, alphabetically
+    // before the clear ones: "Albert" (croaky), "Bad News" (sung), "Bells", "Whisper", …
+    NOVELTY: /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|grandma|grandpa|hysterical|jester|organ|pipe organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|princess|agnes|bruce|vicki|victoria)\b/i,
+    // Natural-sounding voices, clearly spoken: macOS (en, en-IN, hi-IN) and Windows.
+    CLEAR: /^(samantha|alex|ava|allison|susan|tom|zoe|evan|nathan|noelle|joelle|daniel|serena|kate|oliver|arthur|martha|karen|lee|moira|tessa|fiona|rishi|veena|isha|neel|kiyara|lekha|microsoft (aria|jenny|guy|zira|david|mark|hazel|george|heera|ravi|kalpana|hemant))\b/i,
+
+    /** 0 is clearest: high-quality variant, known clear voice, any other, novelty. */
+    _clarity(v) {
+        const name = v.name || '';
+        if (this.NOVELTY.test(name)) return 3;
+        if (/premium|enhanced|natural|neural/i.test(name)) return 0;
+        return this.CLEAR.test(name) ? 1 : 2;
     },
 
     _fail(text, reason) {

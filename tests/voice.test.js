@@ -69,3 +69,29 @@ test('a browser without speech synthesis reports it', () => {
   voice.speak('hello');
   assert.equal(errors.length, 1);
 });
+
+// macOS lists its novelty voices ("Albert", "Bad News", "Bells", …) as on-device en-US voices, in
+// alphabetical order, before Samantha: "Albert", a croaky robotic voice, was picked.
+const MAC_VOICES = ['Albert', 'Bad News', 'Bahh', 'Bells', 'Boing', 'Bubbles', 'Cellos',
+  'Eddy (English (United States))', 'Fred', 'Good News', 'Grandma (English (United States))', 'Jester',
+  'Junior', 'Kathy', 'Organ', 'Ralph', 'Samantha', 'Superstar', 'Trinoids', 'Whisper', 'Wobble', 'Zarvox']
+  .map((name) => ({ name, lang: 'en-US', localService: true }))
+  .concat([{ name: 'Rishi', lang: 'en-IN', localService: true }, { name: 'Daniel', lang: 'en-GB', localService: true },
+    { name: 'Lekha', lang: 'hi-IN', localService: true }]);
+
+test('a clear voice is chosen, never a novelty voice such as "Albert" or "Bad News"', () => {
+  const { voice } = load({ voices: MAC_VOICES });
+  assert.equal(voice._pickVoice('en-US').name, 'Samantha');
+  assert.equal(voice._pickVoice('en-GB').name, 'Daniel');
+  assert.equal(voice._pickVoice('hi-IN').name, 'Lekha');
+});
+
+test('without Samantha, an ordinary voice is still preferred to a novelty one', () => {
+  const { voice } = load({ voices: MAC_VOICES.filter((v) => v.name !== 'Samantha') });
+  assert.equal(voice._pickVoice('en-US').name, 'Eddy (English (United States))');
+});
+
+test('if only novelty voices exist, one is used rather than silence', () => {
+  const { voice } = load({ voices: [{ name: 'Albert', lang: 'en-US', localService: true }] });
+  assert.equal(voice._pickVoice('en-US').name, 'Albert');
+});

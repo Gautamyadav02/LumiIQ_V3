@@ -17,6 +17,7 @@ function loadWorker() {
   const key = (req) => new URL(typeof req === 'string' ? req : req.url, ORIGIN).pathname;
   const response = (body, ok = true) => ({ ok, status: ok ? 200 : 500, body, clone() { return response(body, ok); } });
   let network = (url) => Promise.resolve(response(`network:${new URL(url, ORIGIN).pathname}`));
+  const inits = [];                                         // the options of each network fetch
   const caches = {
     async open(name) {
       if (!store.has(name)) store.set(name, new Map());
@@ -41,7 +42,7 @@ function loadWorker() {
   };
   const context = vm.createContext({
     self, caches, URL, Promise, console,
-    fetch: (req) => network(typeof req === 'string' ? req : req.url),
+    fetch: (req, init) => { inits.push(init); return network(typeof req === 'string' ? req : req.url); },
     Response: { error: () => ({ ok: false, status: 0, body: 'network-error' }) },
   });
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8'), context, { filename: 'sw.js' });
@@ -54,7 +55,7 @@ function loadWorker() {
     handlers.fetch({ request: { url: new URL(url, ORIGIN).href, method }, respondWith: (p) => { answer = p; } });
     return answer === null ? null : (await answer).body;     // null: left to the browser (not intercepted)
   }
-  return { install, request, store, setNetwork: (fn) => { network = fn; }, handlers };
+  return { install, request, store, inits, setNetwork: (fn) => { network = fn; }, handlers };
 }
 
 test('MediaPipe WebAssembly is precached, so tracking can start without the server', async () => {
@@ -102,4 +103,12 @@ test('old caches are deleted when a new version activates', async () => {
   await sw.install();
   let done; sw.handlers.activate({ waitUntil: (p) => { done = p; } }); await done;
   assert.equal(sw.store.has('lumiiq-v3'), false);
+});
+
+test("the network fetch bypasses the browser's HTTP cache guess, so files cached before a change are not reused", async () => {
+  // Files served before the server sent Cache-Control were judged "fresh" by Chrome, and the worker's
+  // plain fetch() returned them without asking the server: old JavaScript ran after a change.
+  const w = loadWorker();
+  await w.request('/voice.js');
+  assert.equal(w.inits.at(-1)?.cache, 'no-cache');
 });

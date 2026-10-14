@@ -515,6 +515,10 @@ class LumiIQHandler(SimpleHTTPRequestHandler):
     # ---- helpers --------------------------------------------------
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
+        # App files: the browser must ask before reusing its copy (an unchanged file is a cheap 304).
+        # Without this, Chrome guessed old copies were fresh and ran stale code after a change.
+        if not self._path(self.path).startswith("/api/"):
+            self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def _send_json(self, payload, status=200):

@@ -82,6 +82,20 @@ class StaticFileTests(ServerCase):
             with self.subTest(path=path):
                 self.assertEqual(self.request("GET", path)[0], 404)
 
+    def test_app_files_are_revalidated_so_a_code_change_is_never_run_stale(self):
+        # Without Cache-Control, Chrome guessed the files were still fresh and kept running old
+        # JavaScript after a change, even on reload. "no-cache" asks first; unchanged files are a 304.
+        for path in ["/", "/app.js", "/voice.js", "/gaze-engine.js"]:
+            with self.subTest(path=path):
+                status, headers, _ = self.request("GET", path)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers.get("cache-control"), "no-cache")
+                again = self.request("GET", path, headers={"If-Modified-Since": headers["last-modified"]})
+                self.assertEqual(again[0], 304)
+
+    def test_api_answers_are_still_never_stored(self):
+        self.assertEqual(self.request("GET", "/api/logs")[1].get("cache-control"), "no-store")
+
     def test_never_lists_folders(self):
         for path in ["/gaze/", "/lib/", "/archive/", "/tests/"]:
             with self.subTest(path=path):

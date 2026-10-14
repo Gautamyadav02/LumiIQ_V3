@@ -6,7 +6,7 @@
 // (The previous cache-first handler never revalidated, so after a code change
 // browsers kept running the old JavaScript — AUDIT M12.) API requests are
 // never cached. Bump CACHE_NAME when the ASSETS list changes.
-const CACHE_NAME = 'lumiiq-v7';
+const CACHE_NAME = 'lumiiq-v8';
 const ASSETS = [
     '/',
     '/index.html',
@@ -60,7 +60,9 @@ self.addEventListener('fetch', (e) => {
     // Only the app's own files; API calls and writes go straight to the network.
     if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
     e.respondWith(
-        fetch(e.request)
+        // cache: 'no-cache' asks the server even when the browser's HTTP cache holds a copy it
+        // guesses is fresh (files cached before the server sent Cache-Control: no-cache).
+        fetch(e.request, { cache: 'no-cache' })
             .then((res) => {
                 if (res.ok) {
                     const copy = res.clone();

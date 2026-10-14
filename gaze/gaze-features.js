@@ -162,8 +162,42 @@
     return lm;
   }
 
+  // ── Phase C: candidate accuracy changes ─────────────────────────────
+  // Each change has its own switch, so the offline replay can score it on its own
+  // against the Phase B baseline. With every switch off the gaze code behaves
+  // exactly as in Phase B. None of them is validated until recorded sessions say so.
+  const IMPROVEMENTS = {
+    C1: 'Head-pose compensation: eye features measured in the head\'s own frame, with head turn and tilt added back in',
+    C2: 'Gaze needs an eye opening (EAR) above 0.16; confidence falls smoothly near that floor',
+    C3: 'Calibration rejects a frame disturbed in 3 of its 10 features',
+    C4: 'Calibration ignores samples in the first 300 ms after a target change',
+    C5: 'Model degree 1 or 2, chosen per calibration by leave-one-target-out error',
+    C6: 'Low-confidence frames are smoothed more',
+    C7: 'Drift detector looks for a consistent directional bias',
+  };
+
+  /** Switch settings from 'all', 'none', a list such as ['C1', 'C6'], or an object. */
+  function flags(which) {
+    const names = Object.keys(IMPROVEMENTS);
+    const on = which === 'all' ? names : which === 'none' || which == null ? []
+      : Array.isArray(which) ? which : names.filter((n) => which[n] === true);
+    for (const n of on) if (!IMPROVEMENTS[n]) throw new Error(`Unknown improvement "${n}" (known: ${names.join(', ')})`);
+    return Object.fromEntries(names.map((n) => [n, on.includes(n)]));
+  }
+
+  /** The module options each set of switches means. */
+  function improvementOptions(f) {
+    return {
+      features: { headFrame: !!f.C1, headGain: f.C1 ? 0.4 : 0, earFloor: f.C2 ? 0.16 : 0, softEar: !!f.C2 },
+      calibration: { strictOutliers: !!f.C3, settleMs: f.C4 ? 300 : 0, degree: f.C5 ? 'auto' : 2,
+                     stdFloorRatio: f.C1 ? 0.05 : 0, featureSet: f.C1 ? 'head' : 'image' },
+      stabilizer: { confidenceWeighting: !!f.C6 },
+      drift: { mode: f.C7 ? 'bias' : 'legacy' },
+    };
+  }
+
   const api = { FEATURE_DIM, EYES, RECORD_INDICES, dist, headPose, extract, confidence,
-                smoothConfidence, dwellScale, pack, unpack };
+                smoothConfidence, dwellScale, pack, unpack, IMPROVEMENTS, flags, improvementOptions };
   root.GazeFeatures = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

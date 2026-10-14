@@ -153,7 +153,13 @@
   // ── Standardization (z-score) ───────────────────────────────────────────
 
   class StandardScaler {
-    fit(X) {
+    /**
+     * @param {number} [floorRatio=0]  Phase C (C1): a column's standard deviation is never
+     *   taken as smaller than this share of its mean's size. A feature that hardly moved
+     *   during calibration (face size, with the head still) then cannot turn a small later
+     *   change into an enormous standardised value.
+     */
+    fit(X, floorRatio = 0) {
       const n = X.length;
       const p = X[0].length;
       this.mean = new Array(p).fill(0);
@@ -166,7 +172,8 @@
         for (let i = 0; i < n; i++) { const d = X[i][j] - m; v += d * d; }
         v = Math.sqrt(v / n);
         this.mean[j] = m;
-        this.std[j] = v > 1e-9 ? v : 1.0; // Avoid divide-by-zero on constant columns.
+        const floor = floorRatio > 0 ? floorRatio * Math.abs(m) : 0;
+        this.std[j] = Math.max(v, floor) > 1e-9 ? Math.max(v, floor) : 1.0; // Avoid divide-by-zero on constant columns.
       }
       return this;
     }
@@ -219,6 +226,7 @@
     constructor(opts = {}) {
       this.degree = opts.degree != null ? opts.degree : 2;
       this.lambda = opts.lambda != null ? opts.lambda : 1.0;
+      this.stdFloorRatio = opts.stdFloorRatio || 0;
       this.poly = new PolynomialFeatures(this.degree);
       this.scaler = null;
       this.weights = null; // length p+1, weights[0] is the intercept
@@ -227,7 +235,7 @@
     /** @param {number[][]} X raw feature rows  @param {number[]} y targets */
     fit(X, y) {
       const Phi = this.poly.transformAll(X);
-      this.scaler = new StandardScaler().fit(Phi);
+      this.scaler = new StandardScaler().fit(Phi, this.stdFloorRatio);
       const Z = this.scaler.transform(Phi);
 
       const n = Z.length;
@@ -341,7 +349,7 @@
    *
    * @returns {{r2:number, rmse:number|null, folds:number, perTarget:Array, method:string}}
    */
-  function crossValLOTO(X, y, lambda, targetIndices, degree = 2) {
+  function crossValLOTO(X, y, lambda, targetIndices, degree = 2, ridgeOptions = null) {
     const n = X.length;
     const none = { r2: 0, rmse: null, folds: 0, perTarget: [], method: 'none' };
     if (!targetIndices || targetIndices.length !== n) return none;
@@ -358,7 +366,7 @@
         else { Xtr.push(X[i]); ytr.push(y[i]); }
       }
       if (Xtr.length < 3 || Xte.length === 0) continue;
-      const model = new RidgeRegressor({ degree, lambda }).fit(Xtr, ytr);
+      const model = new RidgeRegressor({ ...ridgeOptions, degree, lambda }).fit(Xtr, ytr);
       const pred = model.predict(Xte);
       for (let i = 0; i < yte.length; i++) { yTrueAll.push(yte[i]); yPredAll.push(pred[i]); }
       perTarget.push({ target: heldOut, n: yte.length, rmse: rmse(yte, pred) });
@@ -369,15 +377,24 @@
   }
 
   /**
+   * The lambdas tried for a model of the given degree. A degree-1 model has 11
+   * weights instead of 66, so it needs far less shrinking (Phase C, C5).
+   */
+  function lambdaGrid(degree) {
+    return degree === 1 ? [0.0001, 0.001, 0.01, 0.05, 0.2, 1.0] : [0.01, 0.05, 0.2, 1.0, 5.0, 20.0];
+  }
+
+  /**
    * Pick the lambda from a grid that maximizes cross-validated R². With
    * targetIndices the folds are whole targets (LOTO); without them, or with
    * fewer than three targets, they are interleaved. `method` says which was used.
    */
-  function selectLambda(X, y, degree = 2, grid = [0.01, 0.05, 0.2, 1.0, 5.0, 20.0], targetIndices = null) {
-    const useLoto = !!targetIndices && crossValLOTO(X, y, grid[0], targetIndices, degree).method === 'loto';
+  function selectLambda(X, y, degree = 2, grid = lambdaGrid(degree), targetIndices = null, ridgeOptions = null) {
+    const useLoto = !!targetIndices && crossValLOTO(X, y, grid[0], targetIndices, degree, ridgeOptions).method === 'loto';
     let best = { lambda: grid[0], r2: -Infinity, rmse: Infinity, method: useLoto ? 'loto' : 'interleaved' };
     for (const lambda of grid) {
-      const cv = useLoto ? crossValLOTO(X, y, lambda, targetIndices, degree) : crossValR2(X, y, { degree, lambda });
+      const cv = useLoto ? crossValLOTO(X, y, lambda, targetIndices, degree, ridgeOptions)
+                         : crossValR2(X, y, { ...ridgeOptions, degree, lambda });
       if (cv.r2 > best.r2) best = { lambda, r2: cv.r2, rmse: cv.rmse, method: cv.method };
     }
     return best;
@@ -395,6 +412,7 @@
     crossValR2,
     crossValLOTO,
     selectLambda,
+    lambdaGrid,
   };
   root.RidgeRegressor = RidgeRegressor;
   root.PolynomialFeatures = PolynomialFeatures;

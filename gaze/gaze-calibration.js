@@ -65,8 +65,12 @@
    * we compute the median and MAD (median absolute deviation); a sample that is a
    * gross outlier (> 4 MAD) in more than 30% of dimensions is dropped — this is
    * what blinks and momentary tracking loss look like.
+   *
+   * `strict` (Phase C, C3): drop a sample that is an outlier in 25% or more of the
+   * dimensions. With 10 features that means 3, which is what a frame disturbed by
+   * the eyelids looks like (ly, ry and ear); the Phase B rule let it through.
    */
-  function rejectOutliers(samples, maxKeep) {
+  function rejectOutliers(samples, maxKeep, strict = false) {
     if (samples.length <= 4) return samples.slice();
     const D = samples[0].length;
     const med = new Array(D);
@@ -79,7 +83,7 @@
     const good = samples.filter((s) => {
       let bad = 0;
       for (let d = 0; d < D; d++) if (Math.abs(s[d] - med[d]) > 4 * mad[d]) bad++;
-      return bad / D <= 0.3;
+      return strict ? bad / D < 0.25 : bad / D <= 0.3;
     });
     const kept = good.length >= 3 ? good : samples.slice();
 
@@ -98,15 +102,31 @@
     return 'Poor';
   }
 
+  const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
   class GazeCalibration {
+    /**
+     * @param {object} [opts]
+     * @param {number|'auto'} [opts.degree=2]  polynomial degree; 'auto' (Phase C, C5) fits
+     *   degree 1 and 2 and keeps the one with the lower leave-one-target-out error
+     * @param {number}  [opts.settleMs=0]       ignore samples this long after a target change (C4)
+     * @param {boolean} [opts.strictOutliers]   the stricter outlier rule (C3)
+     * @param {number}  [opts.stdFloorRatio=0]  floor on feature spread, see StandardScaler (C1)
+     * @param {string}  [opts.featureSet]       'image' (Phase B features) or 'head' (C1); stored
+     *   with the calibration, because a model only works with the features it was trained on
+     * @param {'loto'|'interleaved'} [opts.cv]
+     */
     constructor(opts = {}) {
       this.maxSamplesPerPoint = opts.maxSamplesPerPoint || 24;
-      this.degree = opts.degree != null ? opts.degree : 2;
-      // Saccade-settling window (ms), off by default: the caller driving the
-      // capture UI knows when the eye has landed and calls discardCurrentSamples()
-      // at that moment, so a second settle authority here would only eat the
-      // front of the collection window twice.
+      this.degreeOption = opts.degree != null ? opts.degree : 2;
+      this.degree = typeof this.degreeOption === 'number' ? this.degreeOption : 2;
+      // Saccade-settling window (ms), counted from the moment the target changed.
+      // Off by default: the app's capture UI already waits for the eye to land and
+      // then calls discardCurrentSamples(), so in the app this is a second guard.
       this.settleMs = opts.settleMs != null ? opts.settleMs : 0;
+      this.strictOutliers = opts.strictOutliers === true;
+      this.stdFloorRatio = opts.stdFloorRatio || 0;
+      this.featureSet = opts.featureSet || 'image';
       // How the quality report and lambda are cross-validated: 'loto' (leave one
       // target out, the default since AUDIT M1) or 'interleaved' (the old, optimistic
       // method, kept so the two can be compared on the same samples).
@@ -130,12 +150,13 @@
       this._pointStartTime = null;
     }
 
-    /** Begin a calibration run with the given number of points (5/9/16/25). */
-    begin(pointCount) {
+    /** Begin a calibration run with the given number of points (5/9/16/25); `t` = when the first target appears. */
+    begin(pointCount, t) {
       this.reset();
       this.layout = buildLayout(pointCount);
       this.index = 0;
       this.pointBuffer = [];
+      this._pointStartTime = t != null ? t : clock();
       return this.currentTarget();
     }
 
@@ -145,11 +166,11 @@
       return { x: t.x, y: t.y, index: this.index, total: this.layout.length };
     }
 
-    /** Feed one feature vector for the current target (called per frame). */
-    addSample(features) {
+    /** Feed one feature vector for the current target (called per frame); `t` = its time (ms). */
+    addSample(features, t) {
       if (this.index < 0 || this.index >= this.layout.length) return;
       if (this.settleMs > 0) {
-        const now = performance.now();
+        const now = t != null ? t : clock();
         if (this._pointStartTime === null) this._pointStartTime = now;
         if (now - this._pointStartTime < this.settleMs) return; // eye still in transit
       }
@@ -169,9 +190,9 @@
      * Finish the current target: clean its samples, fold them into the training
      * set, and advance. Returns progress info.
      */
-    commitPoint() {
+    commitPoint(t) {
       const target = this.layout[this.index];
-      const cleaned = rejectOutliers(this.pointBuffer, this.maxSamplesPerPoint);
+      const cleaned = rejectOutliers(this.pointBuffer, this.maxSamplesPerPoint, this.strictOutliers);
       const rejected = this.pointBuffer.length - cleaned.length;
       for (const f of cleaned) {
         this.trainX.push(f);
@@ -180,7 +201,7 @@
         this.trainTargetIndices.push(this.index);
       }
       this.pointBuffer = [];
-      this._pointStartTime = null;
+      this._pointStartTime = t != null ? t : clock();   // the next target appears now
       this.index++;
       const done = this.index >= this.layout.length;
       return {
@@ -205,16 +226,26 @@
       // training and the test fold. selectLambda falls back to interleaved folds
       // if there are fewer than three targets; cvMethod records what was used.
       const targets = this.cv === 'loto' ? this.trainTargetIndices : null;
-      const selX = RMath.selectLambda(this.trainX, this.trainYx, this.degree, undefined, targets);
-      const selY = RMath.selectLambda(this.trainX, this.trainYy, this.degree, undefined, targets);
-
-      // The final models are fitted on all the clean samples.
-      this.modelX = new Ridge({ degree: this.degree, lambda: selX.lambda }).fit(this.trainX, this.trainYx);
-      this.modelY = new Ridge({ degree: this.degree, lambda: selY.lambda }).fit(this.trainX, this.trainYy);
-
-      const r2 = (selX.r2 + selY.r2) / 2;
+      const ridge = this.stdFloorRatio ? { stdFloorRatio: this.stdFloorRatio } : null;
       const w = screen && screen.width ? screen.width : 1920;
       const h = screen && screen.height ? screen.height : 1080;
+      // C5: with degree 'auto', both degrees are tried and the lower estimated error wins.
+      const degrees = this.degreeOption === 'auto' ? [1, 2] : [this.degree];
+      const fits = degrees.map((degree) => {
+        const grid = RMath.lambdaGrid ? RMath.lambdaGrid(degree) : undefined;
+        const sx = RMath.selectLambda(this.trainX, this.trainYx, degree, grid, targets, ridge);
+        const sy = RMath.selectLambda(this.trainX, this.trainYy, degree, grid, targets, ridge);
+        return { degree, selX: sx, selY: sy, errorPx: Math.hypot(sx.rmse * w, sy.rmse * h) };
+      });
+      const best = fits.reduce((a, b) => (b.errorPx < a.errorPx ? b : a));
+      const { selX, selY } = best;
+      this.degree = best.degree;
+
+      // The final models are fitted on all the clean samples.
+      this.modelX = new Ridge({ ...ridge, degree: this.degree, lambda: selX.lambda }).fit(this.trainX, this.trainYx);
+      this.modelY = new Ridge({ ...ridge, degree: this.degree, lambda: selY.lambda }).fit(this.trainX, this.trainYy);
+
+      const r2 = (selX.r2 + selY.r2) / 2;
       const rmseXPx = selX.rmse * w;
       const rmseYPx = selY.rmse * h;
       const accuracyPx = Math.hypot(rmseXPx, rmseYPx);
@@ -235,6 +266,10 @@
         lambdaX: selX.lambda,
         lambdaY: selY.lambda,
         cvMethod: selX.method,          // 'loto' or 'interleaved': how the estimate was made
+        degree: this.degree,
+        // C5: the estimated error (px) of each degree tried
+        degreeChoice: Object.fromEntries(fits.map((f) => [f.degree, Math.round(f.errorPx * 10) / 10])),
+        featureSet: this.featureSet,
       };
       this.isReady = true;
       return this.report;
@@ -253,8 +288,11 @@
     toJSON() {
       if (!this.isReady) return null;
       return {
-        version: 3,
-        featureDim: this.trainX.length > 0 ? this.trainX[0].length : 0,
+        // Version 4 = features measured in the head frame (Phase C, C1); version 3 = the
+        // Phase B features. A model only works with the features it was trained on.
+        version: this.featureSet === 'head' ? 4 : 3,
+        featureSet: this.featureSet,
+        featureDim: this.trainX.length > 0 ? this.trainX[0].length : this.featureDim,
         degree: this.degree,
         modelX: this.modelX.toJSON(),
         modelY: this.modelY.toJSON(),
@@ -263,8 +301,8 @@
     }
 
     static fromJSON(o) {
-      if (!o || o.version !== 3) return null;
-      const c = new GazeCalibration({ degree: o.degree });
+      if (!o || (o.version !== 3 && o.version !== 4)) return null;
+      const c = new GazeCalibration({ degree: o.degree, featureSet: o.featureSet || (o.version === 4 ? 'head' : 'image') });
       // The expected feature width belongs to whoever builds the vectors, so it
       // is surfaced here for the caller to check rather than hardcoded.
       c.featureDim = o.featureDim || 0;

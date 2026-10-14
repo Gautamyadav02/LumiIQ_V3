@@ -91,6 +91,10 @@ test('C4: samples in the first 300 ms after a target change are ignored', () => 
   assert.equal(cal.sampleCount(), 0, 'the guard applies to every target');
   cal.addSample(ROW, 2300);
   assert.equal(cal.sampleCount(), 1);
+  // It says whether it kept the sample, so the engine can mark only kept frames as calibration samples.
+  assert.equal(cal.addSample(ROW, 2310), true);
+  cal.commitPoint(3000);
+  assert.equal(cal.addSample(ROW, 3100), false);
 });
 
 test('C4: discarding the buffer empties it without starting a second wait', () => {
@@ -258,7 +262,7 @@ test('C7: switched off, the detector is the Phase B one', () => {
 });
 
 // ── C2: eye-opening floor for gaze ──────────────────────────────────
-const { faceLandmarks, FACING_CAMERA } = require('./helpers/landmarks');
+const { faceLandmarks, FACING_CAMERA, headMatrix } = require('./helpers/landmarks');
 
 const ALARM_AT_0_10 = { earThreshold: 0.10, activeEye: 'both', swapEyes: false };
 
@@ -362,7 +366,19 @@ test('C1: head angles are folded into the eye features, so the separate angle fe
   // Confidence still sees an extreme head pose.
   const turned = makeHead().frame({ target: { x: 0.5, y: 0.5 }, yaw: 40 });
   const fxTurned = F.extract(turned.lm, turned.matrix, SETTINGS, { ...C1.features, aspect: head.aspect });
-  assert.ok(F.confidence(fxTurned.features, C1.features, fxTurned.pose) < 1);
+  assert.ok(F.confidence(fxTurned.features, C1.features, fxTurned) < 1);
+});
+
+test('C1: what is about the eye itself still uses the iris-in-eye ratio: the "iris at the corner" check and the raw ratio', () => {
+  // The head angle is folded into the C1 features, and their vertical part is measured
+  // in eye widths, so neither says where the iris sits in the eye opening.
+  for (const [eyes, yaw] of [[{ irisX: 0.05 }, 30], [{ irisX: 0.7, irisY: 0.4 }, 0], [{ irisX: 0.5, irisY: 0.95 }, 10]]) {
+    const lm = faceLandmarks(eyes), matrix = headMatrix(yaw, 0);
+    const on = F.extract(lm, matrix, SETTINGS, { ...C1.features, aspect: 16 / 9 });
+    const off = F.extract(lm, matrix, SETTINGS);
+    assert.deepEqual(on.rawRatios, off.rawRatios, `raw ratio, ${JSON.stringify(eyes)}`);
+    assert.equal(F.confidence(on.features, C1.features, on), F.confidence(off.features), `confidence, ${JSON.stringify(eyes)} yaw ${yaw}`);
+  }
 });
 
 test('C1: without a head matrix or depth it falls back to the Phase B features', () => {

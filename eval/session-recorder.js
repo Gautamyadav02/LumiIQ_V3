@@ -26,7 +26,9 @@
   const Features = root.GazeFeatures ||
     (typeof require !== 'undefined' ? require('../gaze/gaze-features.js') : null);
 
-  const REASONS = ['no_face', 'eyes_closed', 'low_confidence', 'calibrating', 'uncalibrated', 'ok'];
+  // Appended only, so the numbers in earlier sessions keep their meaning.
+  // eyes_narrow (Phase C, C2): open, but narrower than the gaze floor.
+  const REASONS = ['no_face', 'eyes_closed', 'low_confidence', 'calibrating', 'uncalibrated', 'ok', 'eyes_narrow'];
   const EYE_MODES = ['none', 'left', 'right', 'both'];
   const FRAME_FIELDS = [
     't', 'face', 'reason', 'eyeMode', 'conf',

@@ -166,15 +166,17 @@
       return { x: t.x, y: t.y, index: this.index, total: this.layout.length };
     }
 
-    /** Feed one feature vector for the current target (called per frame); `t` = its time (ms). */
+    /** Feed one feature vector for the current target (called per frame); `t` = its time (ms).
+     *  Returns whether the sample was kept. */
     addSample(features, t) {
-      if (this.index < 0 || this.index >= this.layout.length) return;
+      if (this.index < 0 || this.index >= this.layout.length) return false;
       if (this.settleMs > 0) {
         const now = t != null ? t : clock();
         if (this._pointStartTime === null) this._pointStartTime = now;
-        if (now - this._pointStartTime < this.settleMs) return; // eye still in transit
+        if (now - this._pointStartTime < this.settleMs) return false; // eye still in transit
       }
       this.pointBuffer.push(features.slice());
+      return true;
     }
 
     sampleCount() { return this.pointBuffer.length; }

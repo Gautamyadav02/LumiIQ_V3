@@ -227,9 +227,19 @@ def validate_settings(patch):
     return {key: _check_setting(key, value) for key, value in patch.items() if key in SETTINGS_SCHEMA}
 
 
+# Calibration versions: 3 = the Phase B features ("image"), 4 = the features
+# measured in the head's frame (Phase C, C1). A model only works with the features
+# it was trained on, so the version and the feature set must agree.
+CALIBRATION_FEATURE_SETS = {3: "image", 4: "head"}
+
+
 def validate_calibration(cal):
-    if not isinstance(cal, dict) or cal.get("version") != 3:
-        raise ValidationError("calibration must be a version-3 calibration object")
+    if not isinstance(cal, dict) or isinstance(cal.get("version"), bool) \
+            or cal.get("version") not in CALIBRATION_FEATURE_SETS:
+        raise ValidationError("calibration must be a version-3 or version-4 calibration object")
+    expected = CALIBRATION_FEATURE_SETS[cal["version"]]
+    if cal.get("featureSet", "image") != expected:
+        raise ValidationError(f'a version-{cal["version"]} calibration has featureSet "{expected}"')
     for axis in ("modelX", "modelY"):
         model = cal.get(axis)
         if not isinstance(model, dict):

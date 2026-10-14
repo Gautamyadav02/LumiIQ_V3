@@ -135,10 +135,15 @@
     let rx = (irisR.x - R_tl.x) / (R_tr.x - R_tl.x + 1e-6);
     let ry = (irisR.y - R_top.y) / (R_bot.y - R_top.y + 1e-6);
 
+    // The iris-in-eye ratios above (Phase B features). What is about the eye itself
+    // keeps using them under C1: the "iris at the corner" confidence check, the raw
+    // ratio shown to the caregiver and the uncalibrated cursor.
+    let ilx = lx, ily = ly, irx = rx, iry = ry;
     const pose = headPose(matrix);
     let [yaw, pitch, roll] = pose;
     // C1: needs the head matrix and landmark depth; without them, the Phase B features.
     const head = o.headFrame && matrix && matrix.data && irisL.z != null ? toHeadFrame(matrix, o.aspect || 16 / 9) : null;
+    let inHeadFrame = false;
     if (head) {
       const left = headFrameRatio(head, irisL, L_tl, L_tr), right = headFrameRatio(head, irisR, R_tl, R_tr);
       if (left && right) {
@@ -151,6 +156,7 @@
         const dx = gain * Math.sin(yaw * Math.PI / 180), dy = gain * Math.sin(pitch * Math.PI / 180);
         lx = left.x + dx; ly = left.y + dy; rx = right.x + dx; ry = right.y + dy;
         yaw = 0; pitch = 0; roll = 0;
+        inHeadFrame = true;
       }
     }
 
@@ -160,8 +166,8 @@
     const useR = rGaze && (settings.activeEye === 'right' || settings.activeEye === 'both');
     let eyeMode = 'none';
     if (useL && useR) eyeMode = 'both';
-    else if (useL) { rx = lx; ry = ly; eyeMode = 'left'; }
-    else if (useR) { lx = rx; ly = ry; eyeMode = 'right'; }
+    else if (useL) { rx = lx; ry = ly; irx = ilx; iry = ily; eyeMode = 'left'; }
+    else if (useR) { lx = rx; ly = ry; ilx = irx; ily = iry; eyeMode = 'right'; }
     else {
       const none = { eyeMode: 'none', earL, earR, lOpen, rOpen };
       // C2: open by the alarm threshold, but too narrow to give a gaze point.
@@ -171,7 +177,7 @@
 
     const ear = (earL + earR) / 2;
     let faceScale, ipd;
-    if (head && yaw === 0 && pitch === 0 && roll === 0) {
+    if (inHeadFrame) {
       // In 3-D, so that turning the head does not change them.
       faceScale = dist3(head, lm[33], lm[263]);
       ipd = dist3(head, lm[468], lm[473]);
@@ -185,9 +191,14 @@
     const result = {
       features: [lx, ly, rx, ry, yaw, pitch, roll, ear, faceScale, ipd],
       eyeMode, earL, earR, lOpen, rOpen,
-      rawRatios: { x: (lx + rx) / 2, y: (ly + ry) / 2 },
+      rawRatios: { x: (ilx + irx) / 2, y: (ily + iry) / 2 },
     };
-    if (head) result.pose = pose;              // C1: the angles left the features; keep them for confidence
+    if (inHeadFrame) {
+      // C1: the angles left the features, and the eye features are no longer the
+      // in-eye ratio; both are kept for confidence().
+      result.pose = pose;
+      result.inEye = [ilx, ily];
+    }
     return result;
   }
 
@@ -195,10 +206,12 @@
    * How far the frame can be trusted (1 = fully); below 0.2 it gives no gaze point.
    * @param {object} [opts]  softEar (C2): confidence rises gradually above the EAR floor
    *   instead of halving below 0.12
-   * @param {number[]} [pose]  [yaw, pitch, roll] when they are not in the features (C1)
+   * @param {object} [fx]  the extract() result: under C1 its `pose` and `inEye` are used,
+   *   because the features no longer hold the head angles or the iris-in-eye ratio
    */
-  function confidence(features, opts, pose) {
+  function confidence(features, opts, fx) {
     const o = opts || NO_OPTIONS;
+    const pose = fx && fx.pose, inEye = fx && fx.inEye;
     let score = 1.0;
 
     // 1. EAR sanity — very low or very high EAR suggests bad detection
@@ -212,7 +225,7 @@
     }
 
     // 2. Iris containment — iris center should be INSIDE eye contour
-    const lx = features[0], ly = features[1];
+    const lx = inEye ? inEye[0] : features[0], ly = inEye ? inEye[1] : features[1];
     if (lx < 0.1 || lx > 0.9 || ly < 0.1 || ly > 0.9) score *= 0.6;
 
     // 3. Head pose extremes — accuracy degrades at large angles

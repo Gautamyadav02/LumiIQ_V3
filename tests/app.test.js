@@ -15,6 +15,7 @@ function setupApp({ logs = {} } = {}) {
     getTypedLogs: () => logs.typed || [],
     getSymptomLogs: () => logs.symptom || [],
     getAlertLogs: () => logs.alert || [],
+    getCalibration: () => null,
   };
   for (const id of ['gazeCursor', 'statusDot', 'statusText', 'emergencyOverlay', 'emergencyDesc',
                     'dashCommLogs', 'dashAlertLogs']) env.element({ id });
@@ -125,4 +126,28 @@ test('Reset settings: asks first, then restores the defaults and shows them', ()
   assert.equal(asked, 2);
   assert.equal(resets, 1);
   assert.match(env.document.getElementById('noticeText').textContent, /defaults/i);
+});
+
+// ── Phase C ─────────────────────────────────────────────────────────
+test('C2: the pill says when the eyes are open but too narrow for a gaze point', () => {
+  const { app, pill } = setupApp();
+  app._onGazeUpdate(null, null, 'none', 'Eyes too narrow', 0);
+  assert.match(pill(), /too narrow/i);
+  assert.doesNotMatch(pill(), /closed/i);
+});
+
+test('C7: the drift detector uses the directional rule and starts afresh for each calibration; off, the old rule as before', () => {
+  const { env, app } = setupApp();
+  const gaze = env.get('LumiGaze');
+  gaze.calibration = { id: 1 };
+  const first = app._drift();
+  assert.equal(first.mode, 'bias');
+  assert.equal(app._drift(), first, 'the same detector while the calibration stays the same');
+  gaze.calibration = { id: 2 };
+  assert.notEqual(app._drift(), first, 'a new calibration: earlier selections no longer count');
+  gaze.setImprovements('none');
+  const legacy = app._drift();
+  assert.equal(legacy.mode, 'legacy');
+  gaze.calibration = { id: 3 };
+  assert.equal(app._drift(), legacy, 'switched off: kept across calibrations, as before Phase C');
 });

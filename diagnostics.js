@@ -50,6 +50,7 @@
     uncalibrated: 'cursor only (not calibrated: clicks off)',
     calibrating: 'no (calibrating: samples collected)',
     eyes_closed: 'no (no usable eye: closed, or not the selected eye)',
+    eyes_narrow: 'no (eyes open, but too narrow for a reliable gaze point)',
     low_confidence: 'no (confidence below 0.2)',
     no_face: 'no (no face)',
   };

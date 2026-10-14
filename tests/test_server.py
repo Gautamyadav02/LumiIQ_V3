@@ -225,6 +225,21 @@ class CalibrationTests(ServerCase):
             with self.subTest(body=body):
                 self.assertEqual(self.json_request("PUT", "/api/calibration", body)[0], 400)
 
+    def test_head_frame_calibration_version_4_is_accepted(self):
+        # Phase C (C1): a calibration of the head-frame features is version 4.
+        head = dict(self.VALID, version=4, featureSet="head")
+        self.assertEqual(self.json_request("PUT", "/api/calibration", head)[0], 200)
+        self.assertEqual(self.json_request("GET", "/api/calibration")[1], head)
+        image = dict(self.VALID, featureSet="image")
+        self.assertEqual(self.json_request("PUT", "/api/calibration", image)[0], 200)
+
+    def test_version_and_feature_set_must_agree(self):
+        for body in [dict(self.VALID, version=4), dict(self.VALID, version=4, featureSet="image"),
+                     dict(self.VALID, featureSet="head"), dict(self.VALID, featureSet="other"),
+                     dict(self.VALID, version=5, featureSet="head")]:
+            with self.subTest(body={k: body.get(k) for k in ("version", "featureSet")}):
+                self.assertEqual(self.json_request("PUT", "/api/calibration", body)[0], 400)
+
 
 def eval_session(**changes):
     """A minimal valid evaluation session (format v2, as eval/session-recorder.js writes it)."""

@@ -17,6 +17,7 @@
  * Usage:
  *   node eval/replay.js                       replay every session in eval/sessions/
  *   node eval/replay.js <file-or-folder> …    replay these
+ *     --improvements all|none|C1,C6  the Phase C changes to apply (default: as recorded)
  *     --degree 1|2            polynomial degree of the model
  *     --cv loto|interleaved   how lambda and the in-app estimate are cross-validated
  *     --smoothing 0.05..0.45  one smoothing level for the whole session
@@ -35,6 +36,8 @@ const Features = require('../gaze/gaze-features.js');
 const { GazeCalibration } = require('../gaze/gaze-calibration.js');
 const { GazeStabilizer } = require('../gaze/gaze-stabilizer.js');
 const { DwellController } = require('../gaze/dwell-controller.js');
+const { DriftDetector } = require('../gaze/drift-detector.js');
+const { PLAN } = require('./eval-wizard.js');
 const M = require('./metrics.js');
 const { SessionRecorder } = require('./session-recorder.js');
 
@@ -43,11 +46,12 @@ const FEATURE_FIELDS = ['f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f
 
 /**
  * Replay options. `null` means "as recorded".
- * `features`, `calibration` and `stabilizer` are passed to the gaze modules
- * as their own options (used for the Phase C variants).
+ * `features`, `calibration` and `stabilizer` are passed to the gaze modules as
+ * their own options, on top of what the improvements switched on mean.
  */
 const DEFAULTS = {
-  degree: 2,            // polynomial degree of the regression
+  improvements: null,   // Phase C switches (GazeFeatures.flags): null = those the session was recorded with
+  degree: null,         // polynomial degree: null = as the improvements say (2, or 1-or-2 with C5)
   cv: 'loto',           // 'loto' | 'interleaved'
   smoothing: null,      // null: the smoothing each phase was recorded with
   recompute: false,     // rebuild features from the recorded landmarks
@@ -55,6 +59,37 @@ const DEFAULTS = {
   calibration: null,    // options for GazeCalibration
   stabilizer: null,     // options for GazeStabilizer
 };
+
+/** The Phase C switches a session was recorded with (none for a session from before Phase C). */
+function recordedFlags(session) {
+  const flags = session.engine && session.engine.flags;
+  return Features.flags(flags && Object.keys(flags).length ? flags : 'none');
+}
+
+/** The camera picture's aspect ratio, if the session recorded it. */
+function cameraAspect(session) {
+  const c = session.camera;
+  return c && c.width > 0 && c.height > 0 ? c.width / c.height : null;
+}
+
+/** Turn replay options into the options each gaze module gets. */
+function resolve(session, options) {
+  const opts = { ...DEFAULTS, ...options };
+  const recorded = recordedFlags(session);
+  const flags = opts.improvements == null ? recorded : Features.flags(opts.improvements);
+  const io = Features.improvementOptions(flags);
+  const aspect = cameraAspect(session);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  return {
+    ...opts, flags, recorded,
+    featureOptions: { ...io.features, ...(aspect ? { aspect } : null), ...(opts.features || {}) },
+    calibrationOptions: { ...io.calibration, cv: opts.cv, ...(opts.degree != null ? { degree: opts.degree } : null), ...(opts.calibration || {}) },
+    stabilizerOptions: { ...io.stabilizer, ...(opts.stabilizer || {}) },
+    driftMode: io.drift.mode,
+    // The recorded features can be used as they are only if they were made the same way.
+    sameFeatures: !opts.features && same(io.features, Features.improvementOptions(recorded).features),
+  };
+}
 
 function loadSession(file) {
   const session = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -74,12 +109,12 @@ const label = (session) => (session.synthetic === true ? 'synthetic' : 'replayed
 
 // ── Stage 1: features ────────────────────────────────────────────────
 
-/** Per frame: the feature vector (or null) and its confidence. */
+/** Per frame: the feature vector (or null) and its confidence. `opts` as resolve() returns it. */
 function frameFeatures(session, opts) {
   const col = (name) => session.frameFields.indexOf(name);
   const fi = FEATURE_FIELDS.map(col), ci = col('conf');
   const recorded = session.frames.map((f) => (f[fi[0]] == null ? null : fi.map((i) => f[i])));
-  if (!opts.recompute && !opts.features) {
+  if (!opts.recompute && opts.sameFeatures) {
     return { features: recorded, conf: session.frames.map((f) => f[ci] || 0), check: { featureFrames: 0, featureMaxDiff: null } };
   }
   const settings = { earThreshold: 0.18, activeEye: 'both', swapEyes: false, ...(session.settings || {}) };
@@ -89,10 +124,10 @@ function frameFeatures(session, opts) {
     const lm = session.landmarks[i];
     if (!lm) { features.push(null); conf.push(0); continue; }
     const matrix = session.matrices[i] ? { data: session.matrices[i] } : null;
-    const fx = Features.extract(Features.unpack(lm), matrix, settings, opts.features || undefined);
+    const fx = Features.extract(Features.unpack(lm), matrix, settings, opts.featureOptions);
     features.push(fx.features || null);
-    conf.push(fx.features ? Features.confidence(fx.features) : 0);
-    if (fx.features && recorded[i] && !opts.features) {
+    conf.push(fx.features ? Features.confidence(fx.features, opts.featureOptions, fx) : 0);
+    if (fx.features && recorded[i] && opts.sameFeatures) {
       frames++;
       for (let k = 0; k < fx.features.length; k++) maxDiff = Math.max(maxDiff, Math.abs(fx.features[k] - recorded[i][k]));
     }
@@ -102,18 +137,26 @@ function frameFeatures(session, opts) {
 
 // ── Stage 2: calibration ─────────────────────────────────────────────
 
-/** Re-fit one recorded calibration from the frames each of its points was built from. */
+/**
+ * Re-fit one recorded calibration from the frames each of its points was built
+ * from, at their recorded times. A target appears when the previous point is
+ * committed (the first when the calibration starts). A session without commit
+ * times (recorded before they were) is fitted with no settle wait (C4).
+ * A variant can drop frames the live run kept, but cannot add frames it did not collect.
+ */
 function fitCalibration(session, name, features, opts) {
   const record = (session.calibrations || []).filter((c) => c.name === name && c.report && c.report.ok).pop();
   if (!record) return null;
-  const cal = new GazeCalibration({ degree: opts.degree, cv: opts.cv, ...(opts.calibration || {}) });
-  let target = cal.begin(record.points);
+  const it = session.frameFields.indexOf('t');
+  const timed = record.targets.every((p) => typeof p.t === 'number');
+  const cal = new GazeCalibration(opts.calibrationOptions);
+  let target = cal.begin(record.points, timed ? record.t0 : -Infinity);
   for (const point of record.targets.slice().sort((a, b) => a.index - b.index)) {
     if (!target || Math.abs(target.x - point.x) > 1e-9 || Math.abs(target.y - point.y) > 1e-9) {
       throw new Error(`${session.id}: calibration ${name}, point ${point.index} is not where the ${record.points}-point layout puts it`);
     }
-    for (const i of point.frames) if (features[i]) cal.addSample(features[i]);
-    target = cal.commitPoint().next;
+    for (const i of point.frames) if (features[i]) cal.addSample(features[i], session.frames[i][it]);
+    target = cal.commitPoint(timed ? point.t : -Infinity).next;
   }
   const report = cal.train({ width: session.screen.width, height: session.screen.height });
   return { name, points: record.points, endT: record.t1, model: cal, report };
@@ -148,7 +191,7 @@ function replayGaze(session, opts) {
   const order = Object.values(calibrations).sort((a, b) => a.endT - b.endT);
   const smoothing = frameSmoothing(session, opts);
   const { width, height } = session.screen;
-  const stabilizer = new GazeStabilizer({ width, height, ...GazeStabilizer.paramsFor(smoothing[0]), ...(opts.stabilizer || {}) });
+  const stabilizer = new GazeStabilizer({ width, height, ...GazeStabilizer.paramsFor(smoothing[0]), ...opts.stabilizerOptions });
 
   const gaze = [], raw = [];
   for (let i = 0; i < session.frames.length; i++) {
@@ -194,26 +237,26 @@ function compareGaze(session, run) {
   return { gazeFrames: frames, gazeMaxDiffPx: maxDiff, gazeMeanDiffPx: sum / frames, rawMaxDiffPx: rawMax };
 }
 
-// ── Stage 4: dwell, for the rest period ──────────────────────────────
+// ── Stage 4: dwell, for the rest period and the selection test ───────
 
-/** Re-run the real dwell controller over the rest period, on the recorded key layout. */
-function replayRestDwell(session, run) {
-  const phase = (session.phases || []).find((p) => p.name === 'rest');
-  const keys = session.layouts && session.layouts.keyboard;
-  const live = session.rest ? (session.rest.activations || []).length : null;
-  if (!phase || !keys) return { live, replayedDwell: null, labels: [] };
+/**
+ * Run the real dwell controller over one phase's frames, on the recorded key
+ * layout. Returns each activation: the key, its time, and the gaze point then.
+ */
+function dwellOver(session, run, phase, keys) {
   const settings = session.settings || {};
   const it = session.frameFields.indexOf('t');
   const under = (x, y) => keys.find((k) => x >= k.x && x <= k.x + k.w && y >= k.y && y <= k.y + k.h) || null;
-  let hitAt = -Infinity, hit = null, now = 0;
-  const labels = [];
+  let hitAt = -Infinity, hit = null, now = 0, point = null;
+  // The engine looks up the target under the gaze at most every 50 ms.
+  const lookup = (x, y) => { if (now - hitAt >= 50) { hitAt = now; hit = under(x, y); } return hit; };
+  const activations = [];
   const dwell = new DwellController({
     dwellTime: settings.dwellTimeMs || 1200,
     adaptive: true,
-    // The engine looks up the target under the gaze at most every 50 ms.
-    hitTest: (x, y) => { if (now - hitAt >= 50) { hitAt = now; hit = under(x, y); } return hit; },
+    hitTest: lookup,
     getRect: (k) => ({ left: k.x, top: k.y, right: k.x + k.w, bottom: k.y + k.h }),
-    onActivate: (k) => labels.push(k.label),
+    onActivate: (k) => activations.push({ key: k, label: k.label, t: now, gaze: point }),
   });
   dwell.setParams({ autoActivate: (phase.mode || settings.selectionMode) !== 'blink', repeatWhileLooking: settings.dwellRepeat === true });
   // The engine's running average of confidence covers every frame that produced a prediction.
@@ -225,10 +268,71 @@ function replayRestDwell(session, run) {
     if (i < phase.frame0) continue;
     now = session.frames[i][it];
     if (!g) { dwell.noGaze(now); continue; }
+    point = g;
+    // The engine also looks up the target on every gaze frame (for blink selection),
+    // which keeps the 50 ms throttle on the same rhythm as live.
+    lookup(g.x, g.y);
     dwell.setDwellTime((settings.dwellTimeMs || 1200) * Features.dwellScale(avg));
     dwell.update(g.x, g.y, now);
   }
-  return { live, replayedDwell: labels.length, labels };
+  return activations;
+}
+
+/** Re-run dwell over the rest period: how many keys the gaze would have selected. */
+function replayRestDwell(session, run) {
+  const phase = (session.phases || []).find((p) => p.name === 'rest');
+  const keys = session.layouts && session.layouts.keyboard;
+  const live = session.rest ? (session.rest.activations || []).length : null;
+  if (!phase || !keys) return { live, replayedDwell: null, perMin: null, labels: [], activations: [] };
+  const activations = dwellOver(session, run, phase, keys);
+  const durationMs = session.rest && session.rest.durationMs;
+  return { live, replayedDwell: activations.length, perMin: M.falseActivationsPerMin(activations.length, durationMs),
+           labels: activations.map((a) => a.label), activations };
+}
+
+/**
+ * Re-run dwell over the dwell half of the selection test. Each prompt's window
+ * runs from the prompt to the next prompt (or the phase's end), at most the
+ * wizard's time limit; within it, keys selected before the prompted one are
+ * wrong selections, as in the live test.
+ * This is an estimate: the person's eyes did what they did live, and how a
+ * different cursor would have changed that cannot be known.
+ */
+function replaySelectionDwell(session, run) {
+  const phase = (session.phases || []).find((p) => p.name === 'selection' && p.mode === 'dwell');
+  const keys = session.layouts && session.layouts.keyboard;
+  const live = (session.selections || []).filter((t) => t.mode === 'dwell').sort((a, b) => a.promptT - b.promptT);
+  if (!phase || !keys || !live.length) return { trials: [], summary: M.selectionSummary([]), activations: [] };
+  const activations = dwellOver(session, run, phase, keys);
+  const phaseEnd = phase.t1 == null ? Infinity : phase.t1;
+  const trials = live.map((t, n) => {
+    const end = Math.min(t.promptT + PLAN.SELECTION_TIMEOUT_MS, n + 1 < live.length ? live[n + 1].promptT : phaseEnd);
+    const trial = { mode: 'dwell', index: t.index, prompted: t.prompted, promptT: t.promptT, selections: [], outcome: 'missed', timeMs: null };
+    for (const a of activations) {
+      if (a.t < t.promptT || a.t >= end) continue;
+      const correct = a.label === t.prompted;
+      trial.selections.push({ t: a.t, label: a.label, correct, by: 'dwell' });
+      if (correct) { trial.outcome = 'correct'; trial.timeMs = a.t - t.promptT; break; }
+    }
+    return trial;
+  });
+  return { trials, summary: M.selectionSummary(trials), activations };
+}
+
+/**
+ * The drift detector (C7) over the replayed dwell selections of the selection
+ * test and the rest period, in time order, as the app feeds it: the gaze point
+ * when each selection fired, against the selected key.
+ */
+function replayDrift(activations, mode) {
+  const drift = new DriftDetector({ mode });
+  let warnings = 0;
+  for (const a of activations.slice().sort((x, y) => x.t - y.t)) {
+    if (!a.gaze) continue;
+    const k = a.key;
+    if (drift.onDwellActivate(a.gaze, { x: k.x + k.w / 2, y: k.y + k.h / 2 }, { width: k.w, height: k.h })) warnings++;
+  }
+  return { mode, selections: activations.length, warnings };
 }
 
 // ── The whole session ────────────────────────────────────────────────
@@ -240,7 +344,7 @@ function replayRestDwell(session, run) {
 function replaySession(session, options = {}) {
   const problems = SessionRecorder.validate(session);
   if (problems.length) throw new Error(`Session cannot be replayed: ${problems.join('; ')}`);
-  const opts = { ...DEFAULTS, ...options };
+  const opts = resolve(session, options);
   const geom = M.sessionGeometry(session);
   const run = replayGaze(session, opts);
 
@@ -258,7 +362,7 @@ function replaySession(session, options = {}) {
     if (!run.calibrations[name]) continue;
     m1[name] = {};
     for (const cv of ['loto', 'interleaved']) {
-      const other = cv === opts.cv ? run : replayGaze(session, { ...opts, cv });
+      const other = cv === opts.cv ? run : replayGaze(session, resolve(session, { ...options, cv }));
       const c = other.calibrations[name];
       if (!c) continue;
       m1[name][cv] = {
@@ -269,16 +373,21 @@ function replaySession(session, options = {}) {
     }
   }
 
+  const rest = replayRestDwell(session, run);
+  const selection = replaySelectionDwell(session, run);
   return {
     id: session.id,
     label: label(session),
-    options: { degree: opts.degree, cv: opts.cv, smoothing: opts.smoothing, recompute: opts.recompute,
+    options: { improvements: opts.flags, recordedImprovements: opts.recorded, degree: opts.degree, cv: opts.cv,
+               smoothing: opts.smoothing, recompute: opts.recompute, aspect: cameraAspect(session),
                features: opts.features, calibration: opts.calibration, stabilizer: opts.stabilizer },
     checks: { ...run.check, ...compareGaze(session, run) },
     calibrations: run.calibrations,
     analysis,
     m1,
-    rest: replayRestDwell(session, run),
+    rest,
+    selection,
+    drift: replayDrift([...selection.activations, ...rest.activations], opts.driftMode),
   };
 }
 
@@ -298,6 +407,7 @@ function parseArgs(argv) {
     if (a === '--json') json = true;
     else if (a === '--recompute') options.recompute = true;
     else if (a === '--degree') options.degree = parseInt(argv[++i], 10);
+    else if (a === '--improvements') { const v = argv[++i]; options.improvements = v === 'all' || v === 'none' ? v : v.split(','); }
     else if (a === '--cv') options.cv = argv[++i];
     else if (a === '--smoothing') options.smoothing = parseFloat(argv[++i]);
     else targets.push(a);
@@ -310,8 +420,9 @@ function describe(result) {
   const deg = (v) => (v == null ? '' : ` / ${v.toFixed(2)}°`);
   const both = (m) => (m.px == null ? 'not measured' : `${px(m.px)}${deg(m.deg)}`);
   const o = result.options;
+  const on = Object.keys(o.improvements).filter((n) => o.improvements[n]);
   const lines = [
-    `${result.id} [${result.label}]  degree ${o.degree}, cv ${o.cv}, smoothing ${o.smoothing == null ? 'as recorded' : o.smoothing}`,
+    `${result.id} [${result.label}]  improvements ${on.length ? on.join(', ') : 'none'}, degree ${o.degree == null ? 'as the improvements say' : o.degree}, cv ${o.cv}, smoothing ${o.smoothing == null ? 'as recorded' : o.smoothing}`,
     `  replay check over ${result.checks.gazeFrames} frames: model output within ${px(result.checks.rawMaxDiffPx)} of the live one; smoothed gaze within ${px(result.checks.gazeMaxDiffPx)} (mean ${px(result.checks.gazeMeanDiffPx)})`,
   ];
   for (const set of ['val9', 'val16']) {
@@ -328,6 +439,8 @@ function describe(result) {
     }
   }
   lines.push(`  rest: ${result.rest.live == null ? 'not recorded' : result.rest.live + ' live activation(s)'}, ${result.rest.replayedDwell == null ? 'dwell not replayed' : result.rest.replayedDwell + ' on dwell replay'}`);
+  const sel = result.selection.summary;
+  lines.push(`  selection test, dwell, replayed: ${sel.trials ? `${sel.correct} of ${sel.trials} correct, ${sel.wrong} wrong, ${sel.missed} missed` : 'not recorded'}; drift warnings (${result.drift.mode}): ${result.drift.warnings}`);
   return lines.join('\n');
 }
 
@@ -353,5 +466,6 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { DEFAULTS, loadSession, findSessions, label, frameFeatures, fitCalibration, replayGaze,
-                   compareGaze, replayRestDwell, replaySession, aggregate, describe, SESSIONS_DIR };
+module.exports = { DEFAULTS, loadSession, findSessions, label, recordedFlags, cameraAspect, resolve, frameFeatures,
+                   fitCalibration, replayGaze, compareGaze, dwellOver, replayRestDwell, replaySelectionDwell,
+                   replayDrift, replaySession, aggregate, describe, SESSIONS_DIR };

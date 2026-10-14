@@ -23,19 +23,26 @@ test('the module loads under Node and builds the 10-number feature vector', () =
   assert.equal(fx.eyeMode, 'both');
 });
 
-test('the engine uses the module: same features, head pose and confidence', () => {
+test('the engine uses the module: same features, head pose and confidence, with the improvements switched on', () => {
   const env = createEnv();
-  env.window.LumiStore = { getSettings: () => SETTINGS, addAlertLog() {} };
+  env.window.LumiStore = { getSettings: () => SETTINGS, addAlertLog() {}, getCalibration: () => null };
   env.load(...GAZE_MODULES, 'gaze-engine.js');
   const gaze = env.get('LumiGaze');
   const F = env.get('GazeFeatures');
   const yaw = { data: [0.94, 0, -0.342, 0, 0, 1, 0, 0, 0.342, 0, 0.94, 0, 0, 0, 0, 1] };
+  // All Phase C improvements are on by default; no camera size yet means 16:9.
+  const on = { ...F.improvementOptions(F.flags('all')).features, aspect: 16 / 9 };
   for (const eyes of [{}, { irisX: 0.3, irisY: 0.65 }, { openL: 0.05 }, { openL: 0.05, openR: 0.05 }]) {
     const lm = faceLandmarks(eyes);
-    assert.deepEqual(plain(gaze._extractFeatures(lm, yaw, SETTINGS)), plain(F.extract(lm, yaw, SETTINGS)));
+    assert.deepEqual(plain(gaze._extractFeatures(lm, yaw, SETTINGS)), plain(F.extract(lm, yaw, SETTINGS, on)));
   }
   assert.deepEqual(plain(gaze._headPose(yaw)), plain(F.headPose(yaw)));
   const f = [0.05, 0.5, 0.5, 0.5, 40, 0, 0, 0.5, 0.1, 0.1];
+  assert.equal(gaze._computeConfidence(f), F.confidence(f, on));
+  // Switched off, exactly the Phase B module calls.
+  gaze.setImprovements('none');
+  const lm = faceLandmarks({ irisX: 0.3, irisY: 0.65 });
+  assert.deepEqual(plain(gaze._extractFeatures(lm, yaw, SETTINGS)), plain(F.extract(lm, yaw, SETTINGS)));
   assert.equal(gaze._computeConfidence(f), F.confidence(f));
   assert.equal(gaze.FEATURE_DIM, F.FEATURE_DIM);
 });

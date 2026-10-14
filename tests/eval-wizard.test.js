@@ -145,7 +145,7 @@ test('a complete run: all ten stages in order, saved as one valid session (synth
   for (const c of s.calibrations) {
     assert.equal(c.report.ok, true);
     assert.equal(c.report.cvMethod, 'loto');
-    assert.equal(c.model.version, 3);
+    assert.equal(c.model.version, 4, 'head-frame features (C1)');
     assert.ok(c.targets.every((t) => t.frames.length >= 12 && t.frames.length === t.samples));
     // When each point was committed (= when the next target appeared), for replaying a settle guard.
     const times = c.targets.map((t) => t.t);

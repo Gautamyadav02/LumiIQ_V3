@@ -12,6 +12,7 @@ const EyeApp = {
     sirenPlaying: false,
     _audioUnlocked: false,
     driftDetector: null,
+    _driftFor: null,              // the calibration the drift detector is judging
     // While an alarm is showing, or until _pillHoldUntil, gaze frames must not
     // overwrite the status pill (they arrive ~30 times a second).
     _alarmActive: false,
@@ -76,7 +77,6 @@ const EyeApp = {
             LumiGaze._triggerEmergency(e.detail.type, e.detail.details);
         });
         
-        this.driftDetector = new DriftDetector();
         this._updateSleepUi();
     },
 
@@ -131,6 +131,7 @@ const EyeApp = {
         if (x === null) {
             c.classList.add('hidden');
             const reason = { 'Face not detected': 'No face detected', 'Eyes closed': 'Eyes closed',
+                             'Eyes too narrow': 'Eyes too narrow to track — open them a little wider',
                              low_confidence: 'Tracking paused (low confidence)', calibrating: 'Calibrating…' }[state];
             if (pillFree) this.updatePill(reason || 'No gaze', state === 'calibrating' ? 'calibrating' : '');
             return;
@@ -170,6 +171,21 @@ const EyeApp = {
         }
     },
 
+    /**
+     * The drift detector. C7 (Phase C) picks the directional rule, and a new
+     * calibration starts a new detector, so selections made with the old one no
+     * longer count. Switched off: the old rule, kept across calibrations as before.
+     */
+    _drift() {
+        const bias = !!(LumiGaze.improvements && LumiGaze.improvements.C7);
+        const mode = bias ? 'bias' : 'legacy';
+        if (!this.driftDetector || this.driftDetector.mode !== mode || (bias && this._driftFor !== LumiGaze.calibration)) {
+            this.driftDetector = new DriftDetector({ mode });
+            this._driftFor = LumiGaze.calibration;
+        }
+        return this.driftDetector;
+    },
+
     _onDwellClick(el) {
         // Reset ring
         const ring = el.querySelector('.dwell-progress-ring');
@@ -184,7 +200,7 @@ const EyeApp = {
         const rect = el.getBoundingClientRect();
         const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         const pt = LumiGaze.stabilizer.last;
-        if (pt && this.driftDetector && this.driftDetector.onDwellActivate(pt, center, rect)) {
+        if (pt && this._drift().onDwellActivate(pt, center, rect)) {
             this._holdPill('⚠️ Calibration drift suspected — please recalibrate', 'alert', 10000);
         }
 

@@ -575,9 +575,11 @@ test('replay: options are applied — polynomial degree, cross-validation, smoot
   const s = await simulated();
   const base = await defaultReplay();
   const linear = Replay.replaySession(s, { degree: 1 });
+  const quadratic = Replay.replaySession(s, { degree: 2 });
   assert.equal(linear.calibrations.cal9.model.modelX.weights.length, 11, 'degree 1: 10 features + intercept');
-  assert.equal(base.calibrations.cal9.model.modelX.weights.length, 66, 'degree 2: 65 terms + intercept');
+  assert.equal(quadratic.calibrations.cal9.model.modelX.weights.length, 66, 'degree 2: 65 terms + intercept');
   assert.equal(linear.options.degree, 1);
+  assert.equal(base.options.degree, null, 'by default, as the improvements say (C5: the better of 1 and 2)');
   assert.ok(linear.analysis.validation.val9.standard.accuracy.px > 0);
   const old = Replay.replaySession(s, { cv: 'interleaved' });
   assert.equal(old.calibrations.cal9.report.cvMethod, 'interleaved');
@@ -595,6 +597,100 @@ test('replay: dwell is re-run on the recorded key layout for the rest period', a
   assert.ok(stare.rest.live >= 1, 'the simulated person stared at a key during the rest');
   assert.equal(stare.rest.replayedDwell, stare.rest.live, 'the real dwell controller fires the same number of times on replay');
   assert.equal(stare.rest.labels[0], 'G');
+});
+
+// ── Phase C: replaying with the improvements switched on or off ─────
+
+const ALL_ON = { C1: true, C2: true, C3: true, C4: true, C5: true, C6: true, C7: true };
+const ALL_OFF = Object.fromEntries(Object.keys(ALL_ON).map((n) => [n, false]));
+
+test('replay: "as recorded" means the improvements the session was recorded with; before Phase C, none', async () => {
+  const s = await simulated();
+  assert.deepEqual(s.engine.flags, ALL_ON, 'the simulated session was recorded on this branch');
+  const r = await defaultReplay();
+  assert.deepEqual(r.options.improvements, ALL_ON);
+  assert.deepEqual(r.options.recordedImprovements, ALL_ON);
+  assert.equal(r.calibrations.cal9.report.featureSet, 'head');
+  assert.deepEqual(Replay.recordedFlags({ ...s, engine: { ...s.engine, flags: {} } }), ALL_OFF, 'a Phase B session');
+});
+
+test('replay: a variant switches improvements on or off, rebuilding the features when C1 or C2 differ', async () => {
+  const s = await simulated();
+  const base = await defaultReplay();
+  const off = Replay.replaySession(s, { improvements: 'none' });
+  assert.deepEqual(off.options.improvements, ALL_OFF);
+  assert.equal(off.calibrations.cal9.report.featureSet, 'image');
+  assert.equal(off.calibrations.cal9.model.modelX.weights.length, 66, 'Phase B: degree 2');
+  assert.notEqual(off.analysis.validation.val9.standard.accuracy.px, base.analysis.validation.val9.standard.accuracy.px);
+  assert.equal(off.drift.mode, 'legacy');
+  // C7 changes no gaze figure: only when the recalibration warning appears.
+  const noC7 = Replay.replaySession(s, { improvements: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'] });
+  assert.deepEqual(noC7.analysis.validation, base.analysis.validation);
+  assert.equal(noC7.drift.mode, 'legacy');
+  assert.equal(base.drift.mode, 'bias');
+  assert.throws(() => Replay.replaySession(s, { improvements: ['C8'] }), /C8/);
+});
+
+test('replay: the head-frame features use the camera aspect ratio the session recorded', async () => {
+  const s = await simulated();
+  assert.deepEqual(s.camera, { width: 1280, height: 720 });
+  assert.equal(Replay.resolve(s, {}).featureOptions.aspect, 1280 / 720);
+  const square = { ...s, camera: { width: 720, height: 720 } };
+  assert.equal(Replay.resolve(square, {}).featureOptions.aspect, 1);
+  assert.equal(Replay.resolve(square, {}).sameFeatures, true, 'the features were recorded live with the real aspect');
+  assert.equal('aspect' in Replay.resolve({ ...s, camera: null }, {}).featureOptions, false, 'unknown: the module\'s default');
+});
+
+test('replay: calibrations are re-fitted at the recorded times, so the settle guard (C4) acts as it did live', async () => {
+  const s = await simulated();
+  const r = await defaultReplay();
+  const recorded = s.calibrations.find((c) => c.name === 'cal9');
+  assert.equal(r.calibrations.cal9.report.samples, recorded.report.samples, 'the app waits 500 ms, so the 300 ms guard dropped nothing live, nor here');
+  // If the next target had appeared just before a point's frames, the guard drops them.
+  const late = JSON.parse(JSON.stringify(s));
+  const cal = late.calibrations.find((c) => c.name === 'cal9');
+  const it = late.frameFields.indexOf('t');
+  cal.t0 = late.frames[cal.targets[0].frames.at(-1)][it] - 200;   // every frame of point 1 inside the first 300 ms
+  const features = Replay.frameFeatures(late, Replay.resolve(late, {})).features;
+  const fit = Replay.fitCalibration(late, 'cal9', features, Replay.resolve(late, {}));
+  assert.ok(fit.report.samples < recorded.report.samples, `${fit.report.samples} < ${recorded.report.samples}`);
+  // A session recorded without commit times is fitted with no wait.
+  for (const t of cal.targets) delete t.t;
+  const untimed = Replay.fitCalibration(late, 'cal9', features, Replay.resolve(late, {}));
+  assert.equal(untimed.report.samples, recorded.report.samples);
+});
+
+test('replay: the dwell half of the selection test is re-run on the key layout, and matches the live test', async () => {
+  const s = await simulated();
+  const r = await defaultReplay();
+  const live = s.selections.filter((t) => t.mode === 'dwell');
+  assert.equal(r.selection.trials.length, live.length);
+  assert.deepEqual(r.selection.trials.map((t) => [t.prompted, t.outcome]), live.map((t) => [t.prompted, t.outcome]));
+  r.selection.trials.forEach((t, i) => assert.ok(Math.abs(t.timeMs - live[i].timeMs) <= 34, `${t.prompted}: ${t.timeMs} vs ${live[i].timeMs} ms`));
+  assert.deepEqual(r.selection.summary, { trials: 10, selections: 10, correct: 10, wrong: 0, missed: 0, wrongPct: 0, missedPct: 0,
+                                          timeMs: r.selection.summary.timeMs });
+  assert.equal(r.drift.selections, 10, 'the drift detector saw every replayed dwell selection');
+  assert.equal(typeof r.drift.warnings, 'number');
+});
+
+test('replay: a selection made before the prompted key is a wrong selection, and a prompt never reached is missed', () => {
+  const keys = [{ label: 'A', x: 0, y: 0, w: 100, h: 100 }, { label: 'B', x: 200, y: 0, w: 100, h: 100 }];
+  const frames = [], gaze = [];
+  const at = (t, x) => { frames.push([t]); gaze.push(x == null ? null : { x, y: 50 }); };
+  for (let t = 0; t < 3000; t += 33) at(t, 250);        // prompt A: the gaze rests on B, then…
+  for (let t = 3000; t < 6000; t += 33) at(t, 50);      // …on A
+  for (let t = 6000; t < 9000; t += 33) at(t, null);    // prompt B: no gaze at all
+  const session = {
+    frameFields: ['t'], frames, settings: { dwellTimeMs: 1000 }, layouts: { keyboard: keys },
+    phases: [{ name: 'selection', mode: 'dwell', frame0: 0, frame1: frames.length, t0: 0, t1: 9000 }],
+    selections: [{ mode: 'dwell', index: 0, prompted: 'A', promptT: 0 }, { mode: 'dwell', index: 1, prompted: 'B', promptT: 6000 }],
+  };
+  const run = { gaze, conf: gaze.map(() => 1) };
+  const r = Replay.replaySelectionDwell(session, run);
+  assert.deepEqual(r.trials.map((t) => [t.prompted, t.outcome, t.selections.map((x) => `${x.label}${x.correct ? '' : '✗'}`)]),
+                   [['A', 'correct', ['B✗', 'A']], ['B', 'missed', []]]);
+  assert.equal(r.summary.wrong, 1);
+  assert.equal(r.summary.missed, 1);
 });
 
 test('replay: a session without consent, or of another format, is refused', async () => {

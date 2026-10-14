@@ -120,6 +120,12 @@ const LumiGaze = {
     // The landmarks of each eye (see gaze-features.js).
     EYE_LANDMARKS: GazeFeatures.EYES,
 
+    // Phase C accuracy changes C1–C7 (GazeFeatures.IMPROVEMENTS). All are on by
+    // default; setImprovements() switches them, for a comparison. Not saved: a
+    // reload brings back the defaults, and every evaluation session records them.
+    improvements: GazeFeatures.flags('all'),
+    _improvementOpts: null,       // GazeFeatures.improvementOptions(improvements), cached
+
     // ─────────────────────────────────────────────────────
     //  INIT — load MediaPipe + construct V3 subsystems
     // ─────────────────────────────────────────────────────
@@ -169,16 +175,7 @@ const LumiGaze = {
             this.updateStatus('AI ready. Grant camera access.', 'success');
 
             // Restore a previously trained calibration if one was saved.
-            const saved = LumiStore.getCalibration();
-            const restored = saved && saved.version === 3 ? GazeCalibration.fromJSON(saved) : null;
-            if (restored && restored.isReady && restored.featureDim === this.FEATURE_DIM) {
-                this.calibration = restored;
-                this.isCalibrated = true;
-                const q = restored.report ? `${restored.report.rating} (${restored.report.confidence}%)` : '';
-                this.updateStatus(`Calibration restored ${q}`.trim(), 'info');
-            } else if (restored) {
-                this.updateStatus('Saved calibration is out of date — please recalibrate.', 'info');
-            }
+            this._restoreSavedCalibration();
             return true;
         } catch (err) {
             console.error('LumiGaze init failed:', err);
@@ -186,6 +183,62 @@ const LumiGaze = {
             return false;
         }
     },
+
+    /**
+     * Put the saved calibration back into use, if it was made from the features in
+     * use now (a model only works with the features it was trained on). Returns
+     * whether it did; a saved calibration that does not fit is left in storage.
+     */
+    _restoreSavedCalibration() {
+        const saved = LumiStore.getCalibration();
+        if (!saved) return false;
+        const restored = GazeCalibration.fromJSON(saved);
+        const featureSet = this._options().calibration.featureSet;
+        if (restored && restored.isReady && restored.featureDim === this.FEATURE_DIM && restored.featureSet === featureSet) {
+            this.calibration = restored;
+            this.isCalibrated = true;
+            const q = restored.report ? `${restored.report.rating} (${restored.report.confidence}%)` : '';
+            this.updateStatus(`Calibration restored ${q}`.trim(), 'info');
+            return true;
+        }
+        this.updateStatus(restored && restored.featureSet !== featureSet
+            ? 'The saved calibration was made with different gaze settings — please recalibrate.'
+            : 'Saved calibration is out of date — please recalibrate.', 'info');
+        return false;
+    },
+
+    /** The options of the improvements switched on (see GazeFeatures.improvementOptions). */
+    _options() {
+        if (!this._improvementOpts) this._improvementOpts = GazeFeatures.improvementOptions(this.improvements);
+        return this._improvementOpts;
+    },
+
+    /**
+     * Switch the Phase C improvements: 'all', 'none', a list such as ['C1', 'C6'],
+     * or an object. Not during a calibration. If the feature set changes (C1), the
+     * calibration in use no longer fits: it is dropped, and the saved one is used
+     * if it fits. Returns the switches now in force.
+     */
+    setImprovements(which) {
+        if (this.isCalibrating) throw new Error('Finish or cancel the calibration before switching improvements.');
+        this.improvements = GazeFeatures.flags(which);     // throws on an unknown name
+        this._improvementOpts = null;
+        if (this.stabilizer) this.stabilizer.setParams(this._stabilizerParams(this._cachedSettings || LumiStore.getSettings()));
+        const featureSet = this._options().calibration.featureSet;
+        if (this._pendingCalibration && this._pendingCalibration.featureSet !== featureSet) this._pendingCalibration = null;
+        if (!this.calibration || this.calibration.featureSet !== featureSet) {
+            const dropped = this.calibration !== null;
+            this.calibration = null;
+            this.isCalibrated = false;
+            if (!this._restoreSavedCalibration() && dropped && !LumiStore.getCalibration()) {
+                this.updateStatus('The gaze settings changed — please recalibrate.', 'info');
+            }
+        }
+        return { ...this.improvements };
+    },
+
+    /** The switches in force, for an evaluation session's record (a copy). */
+    evalFlags() { return { ...this.improvements }; },
 
     _buildSubsystems() {
         const s = LumiStore.getSettings();
@@ -220,8 +273,11 @@ const LumiGaze = {
         document.addEventListener('visibilitychange', () => this._onVisibilityChange());
     },
 
-    // The "smoothing" setting (0.05 … 0.45) as One Euro filter parameters.
-    _stabilizerParams(s) { return GazeStabilizer.paramsFor(s.smoothingFactor); },
+    // The "smoothing" setting (0.05 … 0.45) as One Euro filter parameters; C6 lets
+    // the frame's confidence lower the cutoff.
+    _stabilizerParams(s) {
+        return { ...GazeStabilizer.paramsFor(s.smoothingFactor), confidenceWeighting: this._options().stabilizer.confidenceWeighting };
+    },
 
     // ─────────────────────────────────────────────────────
     //  CAMERA
@@ -515,13 +571,22 @@ const LumiGaze = {
     // Feature extraction is shared with the offline replay: see gaze/gaze-features.js.
     _dist(a, b) { return GazeFeatures.dist(a, b); },
 
-    _computeConfidence(features) { return GazeFeatures.confidence(features); },
+    /** @param {object} [fx] the _extractFeatures() result (C1 keeps the pose and in-eye ratio there) */
+    _computeConfidence(features, fx) { return GazeFeatures.confidence(features, this._options().features, fx); },
 
     /** Head pose (yaw, pitch, roll in degrees) from MediaPipe's 4×4 transform. */
     _headPose(matrix) { return GazeFeatures.headPose(matrix); },
 
     /** The regression feature vector and blink/eye state from landmarks. */
-    _extractFeatures(lm, matrix, settings) { return GazeFeatures.extract(lm, matrix, settings); },
+    _extractFeatures(lm, matrix, settings) { return GazeFeatures.extract(lm, matrix, settings, this._featureOptions()); },
+
+    /** Feature options: the improvements switched on, and the camera picture's aspect
+     *  ratio (landmarks are normalised by its width and height; C1 needs true proportions). */
+    _featureOptions() {
+        const v = this.videoElement;
+        const aspect = v && v.videoWidth > 0 && v.videoHeight > 0 ? v.videoWidth / v.videoHeight : 16 / 9;
+        return { ...this._options().features, aspect };
+    },
 
     // ─────────────────────────────────────────────────────
     //  LANDMARK PROCESSING (per frame)
@@ -531,7 +596,7 @@ const LumiGaze = {
         const fx = this._extractFeatures(lm, matrix, settings);
 
         if (fx.features) {
-            const conf = this._computeConfidence(fx.features);
+            const conf = this._computeConfidence(fx.features, fx);
             this.lastConfidence = conf;
         } else {
             this.lastConfidence = 0;
@@ -543,8 +608,8 @@ const LumiGaze = {
 
         // ── Calibration capture mode ────────────────────
         if (this.isCalibrating) {
-            if (fx.eyeMode !== 'none' && fx.features) {
-                this._calibRun.addSample(fx.features);
+            // A sample the settle guard (C4) drops is not marked as one.
+            if (fx.eyeMode !== 'none' && fx.features && this._calibRun.addSample(fx.features, info.t)) {
                 info.calSample = true;
                 this.rawRatios = fx.rawRatios;
                 if (this.onCalibrationCollect) this.onCalibrationCollect(this._calibRun.sampleCount());
@@ -556,8 +621,9 @@ const LumiGaze = {
 
         if (fx.eyeMode === 'none' || !fx.features) {
             this.dwell.noGaze(performance.now());
-            if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Eyes closed', this.lastConfidence);
-            this._reportFrame(info, 'eyes_closed');
+            // C2: open (no blink, no alarm), but too narrow for a reliable gaze point.
+            if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', fx.narrow ? 'Eyes too narrow' : 'Eyes closed', this.lastConfidence);
+            this._reportFrame(info, fx.narrow ? 'eyes_narrow' : 'eyes_closed');
             return;
         }
         this.rawRatios = fx.rawRatios;
@@ -572,13 +638,13 @@ const LumiGaze = {
         // ── Predict gaze → stabilize → dwell ────────────
         const norm = this.isCalibrated && this.calibration
             ? this.calibration.predict(fx.features)
-            : this._fallbackMap(fx.features);
+            : this._fallbackMap([fx.rawRatios.x, fx.rawRatios.y, fx.rawRatios.x, fx.rawRatios.y]);   // the in-eye ratio, also under C1
 
         this.stabilizer.setParams(this._stabilizerParams(settings));
         const px = norm.x * window.innerWidth;
         const py = norm.y * window.innerHeight;
         const now = performance.now();
-        const pt = this.stabilizer.process(px, py, now);
+        const pt = this.stabilizer.process(px, py, now, this.lastConfidence);
         info.pred = { x: px, y: py };
         info.tGaze = now;
 
@@ -804,10 +870,10 @@ const LumiGaze = {
      * working until the new one is trained and accepted (AUDIT M6).
      */
     startCalibration(pointCount = 9) {
-        this._calibRun = new GazeCalibration();
+        this._calibRun = new GazeCalibration(this._options().calibration);
         this._pendingCalibration = null;
         this._settled = null;
-        this.calibTarget = this._calibRun.begin(pointCount);
+        this.calibTarget = this._calibRun.begin(pointCount, performance.now());
         this.isCalibrating = true;
         this.updateStatus(`Calibration started — ${pointCount} points. Look at the target.`, 'info');
         return this.calibTarget;
@@ -825,7 +891,7 @@ const LumiGaze = {
         }
         const committed = this._calibRun.currentTarget();
         const samples = this._calibRun.sampleCount();
-        const res = this._calibRun.commitPoint();
+        const res = this._calibRun.commitPoint(performance.now());   // the next target appears now
         this._emit('onCalibrationPoint', {
             index: committed.index, total: committed.total, target: { x: committed.x, y: committed.y },
             samples, accepted: res.accepted, rejected: res.rejected,

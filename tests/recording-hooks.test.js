@@ -46,7 +46,7 @@ test('calibration: sample frames are flagged, and clearing and committing a poin
   ctx.gaze.onCalibrationClear = () => events.push('clear');
   ctx.gaze.onCalibrationPoint = (p) => events.push(plain(p));
   const first = plain(ctx.gaze.startCalibration(5));
-  feedFrames(ctx, 100, EYES_OPEN);
+  feedFrames(ctx, 330, EYES_OPEN);                 // the first 300 ms are skipped (C4), the last frame is not
   assert.equal(last(ctx).calSample, true);
   feedFrames(ctx, 66, EYES_CLOSED);
   assert.equal(last(ctx).calSample, false, 'a closed-eye frame adds no sample');

@@ -104,12 +104,9 @@
                         <button class="dash-btn" id="earCheckBtn">Eyes open / closed check (8 s)</button>
                         <p class="muted-text">The patient looks at a dot at the top, then at the bottom, then closes their eyes at the chime and opens them at the next chime.</p>
                         <pre class="diag-out" id="earCheckOut"></pre>
-                    </div>
-                    <div class="dash-card">
-                        <h3>Evaluation &amp; Accuracy (Phase B)</h3>
-                        <p class="muted-text">Measure real accuracy and precision across 12 held-out validation targets, head rotation, and selection trials (Dissertation Section 3.6).</p>
-                        <button class="dash-btn" id="launchEvalWizardBtn">Launch Evaluation Wizard</button>
-                        <div class="calib-status" id="evalStatusText" style="margin-top: 8px;">Status: Standby</div>
+                        <button class="dash-btn" id="evalStartBtn">Start an evaluation session (about 10 minutes)</button>
+                        <p class="muted-text">Measures accuracy on 12 new targets, the effect of head movement, selection by dwell and by blink, false activations, and lag. It records numbers only, never video, after asking for consent. Sessions are saved on this computer in <code>eval/sessions</code>.</p>
+                        <pre class="diag-out" id="evalStatus"></pre>
                     </div>
                 </div>
 
@@ -321,100 +318,47 @@
     </div>
 </div>
 
-<!-- ── EVALUATION WIZARD OVERLAY (Phase B) ────────────────── -->
+<!-- ── EVALUATION WIZARD (Phase B) ───────────────────────── -->
+<!-- Operator controls only: nothing here is a gaze target. Consent is never pre-ticked. -->
 <div class="cal-overlay hidden" id="evalOverlay">
-    <!-- Screen 1: Intro & Consent -->
-    <div class="cal-intro" id="evalIntro">
-        <h2>Evaluation Wizard (Phase B)</h2>
-        <p>This protocol measures empirical gaze accuracy, precision, and selection performance using 12 held-out validation targets (Dissertation Section 3.6).</p>
-        <p style="color: var(--amber); font-size: 13px; margin: 8px 0;"><strong>Privacy notice:</strong> Only numerical features (head angles, eye ratios, timestamps) are recorded. NO video, webcam photos, or audio are ever saved.</p>
-        <div style="display: flex; flex-direction: column; gap: 8px; margin: 12px 0; text-align: left; max-width: 400px; margin-left: auto; margin-right: auto;">
-            <label style="font-size: 13px;"><input type="checkbox" id="evalConsentCheckbox" checked> I consent to recording numerical tracking features for evaluation.</label>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label for="evalDistanceCm" style="font-size: 13px;">Viewing distance (cm):</label>
-                <input type="number" id="evalDistanceCm" value="50" min="30" max="100" style="width: 70px; padding: 4px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444;">
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label for="evalWidthCm" style="font-size: 13px;">Screen width (cm):</label>
-                <input type="number" id="evalWidthCm" value="34.4" step="0.1" min="20" max="80" style="width: 70px; padding: 4px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444;">
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <label for="evalCondition" style="font-size: 13px;">Condition label:</label>
-                <input type="text" id="evalCondition" value="baseline_9pt" style="width: 140px; padding: 4px; border-radius: 4px; background: #222; color: #fff; border: 1px solid #444;">
-            </div>
+    <div class="eval-card hidden" id="evalCard">
+        <p class="eval-stage" id="evalStage"></p>
+        <h2 id="evalTitle"></h2>
+        <p class="eval-text" id="evalText"></p>
+        <div class="eval-box hidden" id="evalConsentBox">
+            <label><input type="checkbox" id="evalConsent"> I have read this, and I agree to this session being recorded.</label>
         </div>
-        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
-            <button class="dash-btn" id="startEvalWizardProgressBtn">Begin Evaluation →</button>
-            <button class="dash-btn ghost" id="exitEvalIntroBtn">Cancel</button>
+        <div class="eval-box hidden" id="evalSetupBox">
+            <label>Viewing distance (cm) <input type="number" id="evalDistanceCm" min="20" max="200" step="0.5" placeholder="e.g. 60"></label>
+            <label>Screen width (cm) <input type="number" id="evalScreenWidthCm" min="10" max="200" step="0.1" placeholder="e.g. 30.5"></label>
+            <label>Lighting
+                <select id="evalLighting">
+                    <option value="daylight">Daylight</option>
+                    <option value="room light">Room light</option>
+                    <option value="dim">Dim</option>
+                    <option value="uneven">Uneven (light from one side)</option>
+                </select>
+            </label>
+            <label>Note (optional) <input type="text" id="evalNote" maxlength="80" placeholder="e.g. glasses on"></label>
         </div>
-    </div>
-
-    <!-- Screen 2: Calibration Prompt -->
-    <div class="cal-intro hidden" id="evalCalibPrompt">
-        <h2>Step 1: Baseline Calibration</h2>
-        <p>We must first ensure the gaze engine is calibrated. Click below to start the 9-point calibration. When finished, accept the calibration to continue to validation.</p>
-        <button class="dash-btn" id="evalStartCalibBtn">Start 9-Point Calibration →</button>
-        <button class="dash-btn ghost" id="evalSkipCalibBtn" style="margin-top: 8px;">Use Current Calibration &amp; Proceed →</button>
-    </div>
-
-    <!-- Screen 3: Validation Targets -->
-    <div class="cal-dotbox hidden" id="evalValDotBox">
-        <div class="cal-dot" id="evalValDot" style="position: absolute; width: 40px; height: 40px; border-radius: 50%; background: #00e5ff; transform: translate(-50%, -50%); box-shadow: 0 0 15px #00e5ff;">
-            <div class="dot-core" style="width: 10px; height: 10px; background: #fff; border-radius: 50%; margin: 15px auto;"></div>
-        </div>
-        <div class="cal-progress-pill" id="evalValPill">Validation Target 1 / 12</div>
-        <div class="cal-label-box">
-            <p class="cal-label">Look steadily at the cyan target dot</p>
-            <p class="cal-hint">Evaluating held-out target…</p>
-            <button class="dash-btn ghost" id="exitEvalValBtn">Exit Evaluation</button>
+        <pre class="eval-detail" id="evalDetail"></pre>
+        <p class="eval-error" id="evalError"></p>
+        <div class="eval-actions">
+            <button class="dash-btn" id="evalNextBtn">Continue</button>
+            <button class="dash-btn hidden" id="evalDownloadBtn">Download the session file</button>
+            <button class="dash-btn ghost hidden" id="evalRestoreBtn">Restore my previous settings</button>
+            <button class="dash-btn ghost" id="evalCancelBtn">Stop the evaluation</button>
         </div>
     </div>
-
-    <!-- Screen 4: Head Movement Prompt -->
-    <div class="cal-intro hidden" id="evalHeadPrompt">
-        <h2>Step 2: Head Movement Robustness</h2>
-        <p>We will now test tracking stability when the head rotates slightly (~5° yaw), measuring audit finding M2.</p>
-        <button class="dash-btn" id="evalStartHeadBtn">Begin Head Rotation Test →</button>
-    </div>
-
-    <!-- Screen 5: Head Movement Test Box -->
-    <div class="cal-dotbox hidden" id="evalHeadTestBox">
-        <div class="cal-dot" style="position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: #ffaa00; transform: translate(-50%, -50%); box-shadow: 0 0 15px #ffaa00;">
-            <div class="dot-core" style="width: 10px; height: 10px; background: #fff; border-radius: 50%; margin: 15px auto;"></div>
-        </div>
-        <div class="cal-progress-pill">Head Rotation Evaluation</div>
-        <div class="cal-label-box">
-            <p class="cal-label" id="evalHeadInstruction">Look at the center dot.</p>
-            <button class="dash-btn ghost" id="exitEvalHeadBtn">Exit Evaluation</button>
-        </div>
-    </div>
-
-    <!-- Screen 6: Rest Box -->
-    <div class="cal-intro hidden" id="evalRestBox">
-        <h2>Step 3: Rest Period &amp; False Activation Count</h2>
-        <p>Rest your eyes and look freely around the screen. We are measuring involuntary false activations over 60 seconds.</p>
-        <div style="font-size: 32px; font-weight: bold; color: var(--amber); margin: 20px 0;" id="evalRestTimer">60s remaining</div>
-        <button class="dash-btn ghost" id="evalSkipRestBtn">Finish Early &amp; View Results →</button>
-    </div>
-
-    <!-- Screen 7: Summary Results -->
-    <div class="cal-results hidden" id="evalSummaryBox">
-        <h2>Evaluation Session Complete</h2>
-        <div class="cal-result-grid">
-            <div class="cal-result"><span class="cr-label">Accuracy (Px)</span><span class="cr-value" id="evalResAccuracyPx">—</span></div>
-            <div class="cal-result"><span class="cr-label">Accuracy (Visual Angle)</span><span class="cr-value" id="evalResAccuracyDeg">—</span></div>
-            <div class="cal-result"><span class="cr-label">Precision / Jitter (Px)</span><span class="cr-value" id="evalResPrecisionPx">—</span></div>
-            <div class="cal-result"><span class="cr-label">95th Percentile Error</span><span class="cr-value" id="evalResP95Px">—</span></div>
-            <div class="cal-result"><span class="cr-label">False Activations</span><span class="cr-value" id="evalResFalseAct">—</span></div>
-        </div>
-        <p class="cal-result-note" style="margin: 15px 0;">Download the session JSON and place it in <code>eval/sessions/</code>, then run <code>npm run eval:report</code>.</p>
-        <div class="cal-result-actions">
-            <button class="dash-btn" id="evalDownloadJsonBtn">Download Evaluation Session JSON</button>
-            <button class="dash-btn ghost" id="evalCloseSummaryBtn">Close Evaluation</button>
-        </div>
-    </div>
+    <div class="cal-dot hidden" id="evalDot"><div class="dot-ring"></div><div class="dot-core"></div></div>
+    <p class="eval-hud hidden" id="evalHud"></p>
+    <button class="dash-btn ghost eval-stop hidden" id="evalStopBtn">Stop</button>
 </div>
-
+<!-- Shown above the real keyboard during the selection test and the rest period. -->
+<div class="eval-banner hidden" id="evalBanner">
+    <span id="evalBannerText"></span>
+    <button class="dash-btn ghost" id="evalBannerStop">Stop</button>
+</div>
 <!-- ── SCRIPTS ───────────────────────────────────────────── -->
 <script src="database.js"></script>
 <script src="dictionary.js"></script>

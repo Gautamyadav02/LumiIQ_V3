@@ -445,6 +445,44 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 .ear-box { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; max-width: 520px; }
 
+/* ── Evaluation wizard (operator only; see eval/eval-wizard.js) ── */
+.eval-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+    padding: 30px 36px; width: calc(100% - 48px); max-width: 780px; max-height: calc(100vh - 48px);
+    overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+}
+.eval-stage { font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.eval-card h2 { font-family: var(--ff-head); font-size: 1.5rem; color: var(--amber); }
+.eval-text { white-space: pre-line; line-height: 1.5; color: var(--text); }
+.eval-box { display: flex; flex-direction: column; gap: 10px; }
+.eval-box label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.95rem; color: var(--text); }
+#evalConsentBox label { justify-content: flex-start; }
+.eval-box input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+.eval-box input:not([type="checkbox"]), .eval-box select {
+    width: 200px; padding: 8px 10px; border-radius: 8px; font: inherit;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+}
+.eval-detail {
+    margin: 0; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.25); color: var(--text);
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; white-space: pre-wrap;
+}
+.eval-detail:empty, .eval-error:empty { display: none; }
+.eval-error { color: #FF6B60; font-size: 0.9rem; }
+.eval-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.eval-actions .dash-btn { flex: 1 1 200px; padding: 12px 14px; }
+/* Lag measurement: the dot must jump, not glide like the calibration dot. */
+#evalDot.eval-instant { transition: none; }
+.eval-hud { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); color: var(--muted); font-size: 0.95rem; text-align: center; }
+.eval-stop { position: absolute; right: 20px; bottom: 20px; padding: 8px 18px; }
+.eval-banner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9000;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px;
+    background: rgba(11,12,16,0.97); border-bottom: 2px solid var(--amber);
+    color: var(--text); font-family: var(--ff-head); font-size: 1.05rem;
+}
+.eval-banner .dash-btn { padding: 6px 16px; }
+.key-btn.eval-prompt { outline: 4px solid var(--amber); outline-offset: -4px; box-shadow: 0 0 22px var(--amber-glow); }
+
 .dash-btn {
     background: rgba(255,179,0,0.06);
     border: 1px solid rgba(255,179,0,0.2);

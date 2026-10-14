@@ -290,6 +290,12 @@ test('recorder: phases and targets know which frames they cover', () => {
   assert.deepEqual(s.targets.map((t) => [t.t0, t.t1]), [[0, 99], [99, 165]]);
   assert.deepEqual(s.phases.map((p) => [p.name, p.frame0, p.frame1]), [['validation', 0, 5], ['rest', 5, 6]]);
   assert.equal(s.phases[0].calibration, 'cal9');
+  rec.start(START);
+  rec.setPhase('validation', { name: 'sneaky', frame0: 99 });
+  rec.showTarget({ id: 'a', x: 0.5, y: 0.5, phase: 'sneaky', frame0: 99 });
+  const again = rec.finish();
+  assert.deepEqual([again.phases[0].name, again.phases[0].frame0], ['validation', 0], 'extra data cannot overwrite a phase\'s own fields');
+  assert.deepEqual([again.targets[0].phase, again.targets[0].frame0], ['validation', 0]);
 });
 
 test('recorder: each calibration point keeps the frames it was built from', () => {
@@ -366,4 +372,112 @@ test('recorder: a finished session can be written to a folder as <id>.json, and 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  Session analysis (shared by the wizard's summary and the replay)
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * A hand-built session on a 1000×1000 px screen (30 cm wide, viewed from 60 cm):
+ * frames every 100 ms; `gazeAt(t)` gives the smoothed gaze of each frame.
+ */
+function tinySession(build) {
+  const { rec, clock } = recorder();
+  rec.start({ ...START, screen: { width: 1000, height: 1000, dpr: 1 }, setup: { distanceCm: 60, screenWidthCm: 30 } });
+  const frame = (gaze) => {
+    rec.frame({ ...info({ t: clock.t }), gaze, pred: gaze });
+    clock.t += 100;
+  };
+  build({ rec, clock, frame });
+  return rec.finish();
+}
+
+test('analysis: a target\'s samples are the frames inside the time window after it appeared', () => {
+  const s = tinySession(({ rec, frame }) => {
+    rec.setPhase('validation', { name: 'val9' });
+    rec.showTarget({ id: 'i1', group: 'interior', x: 0.5, y: 0.5, set: 'val9' });
+    for (let i = 0; i < 10; i++) frame({ x: 500 + i, y: 500 });          // t = 0, 100, … 900
+    rec.hideTarget();
+  });
+  const samples = M.targetSamples(s, s.targets[0], [300, 700]);
+  assert.deepEqual(samples.map((p) => [p.t, p.x]), [[300, 503], [400, 504], [500, 505], [600, 506]]);
+  assert.equal(M.targetSamples(s, s.targets[0], [5000, 6000]).length, 0);
+});
+
+test('analysis: a validation set is summarised per target, then averaged over targets', () => {
+  const s = tinySession(({ rec, frame }) => {
+    rec.setPhase('validation', { name: 'val9' });
+    rec.showTarget({ id: 'a', group: 'header', x: 0.2, y: 0.1, set: 'val9' });     // at (200, 100) px
+    for (let i = 0; i < 20; i++) frame({ x: 230, y: 100 });                        // 30 px right, no spread
+    rec.showTarget({ id: 'b', group: 'interior', x: 0.8, y: 0.6, set: 'val9' });   // at (800, 600) px
+    for (let i = 0; i < 20; i++) frame({ x: 800, y: i % 2 ? 610 : 590 });          // ±10 px in y, no bias
+    rec.hideTarget();
+  });
+  const v = M.validationSummary(s, { set: 'val9' }, [500, 1600]);
+  assert.equal(v.targets, 2);
+  assert.equal(v.samples, 22);                               // 11 frames in the window per target
+  assert.ok(near(v.accuracy.px, (30 + 10) / 2));             // mean of the two targets' accuracies
+  assert.ok(near(v.accuracy.x.px, (30 + 0) / 2));
+  assert.ok(near(v.accuracy.y.px, (0 + 10) / 2));
+  assert.ok(near(v.precision.x.px, 0));
+  assert.ok(v.precision.y.px > 4.9 && v.precision.y.px <= 5); // target b: SD of ±10 is ~10; averaged with 0
+  assert.equal(v.p95.px, 30);                                // pooled errors: eleven 30s and eleven 10s
+  assert.ok(near(v.accuracy.deg, (M.pxToDeg(30, { distanceCm: 60, cmPerPx: 0.03 }) + M.pxToDeg(10, { distanceCm: 60, cmPerPx: 0.03 })) / 2));
+  const header = M.validationSummary(s, { set: 'val9', groups: ['header'] }, [500, 1600]);
+  assert.equal(header.targets, 1);
+  assert.ok(near(header.accuracy.px, 30));
+});
+
+test('analysis: a set with no usable samples has no numbers', () => {
+  const s = tinySession(({ rec, frame }) => {
+    rec.setPhase('validation', { name: 'val9' });
+    rec.showTarget({ id: 'a', group: 'header', x: 0.2, y: 0.1, set: 'val9' });
+    for (let i = 0; i < 20; i++) frame(null);                 // eyes closed throughout
+    rec.hideTarget();
+  });
+  const v = M.validationSummary(s, { set: 'val9' }, [500, 1600]);
+  assert.equal(v.targets, 0);
+  assert.equal(v.accuracy.px, null);
+  assert.equal(v.p95.px, null);
+  assert.equal(M.validationSummary(s, { set: 'val16' }, [500, 1600]).targets, 0);
+});
+
+test('analysis: fixation jitter and settling time for one smoothing level', () => {
+  const s = tinySession(({ rec, frame }) => {
+    rec.setPhase('fixation', { smoothing: 0.35 });
+    rec.showTarget({ id: 'fix', group: 'lag', x: 0.5, y: 0.5, smoothing: 0.35 });
+    for (let i = 0; i < 50; i++) frame({ x: 500 + (i % 2 ? 3 : 0), y: 500 });     // 3 px steps
+    rec.setPhase('jumps', { smoothing: 0.35 });
+    rec.showTarget({ id: 'j0', group: 'lag', x: 0.8, y: 0.5, smoothing: 0.35 });   // gaze arrives after 400 ms
+    for (let i = 0; i < 20; i++) frame({ x: i < 4 ? 500 + i * 60 : 790, y: 500 });
+    rec.hideTarget();
+  });
+  const lag = M.lagSummary(s, 0.35);
+  assert.ok(near(lag.jitter.px, 3));
+  assert.equal(lag.jumps, 1);
+  assert.equal(lag.settled, 1);
+  assert.equal(lag.settlingMs, 400);
+  assert.equal(M.lagSummary(s, 0.06).jitter.px, null, 'not measured at this smoothing');
+});
+
+test('analysis: the whole session in one call, from the recorded gaze or from a replayed one', () => {
+  const s = tinySession(({ rec, frame }) => {
+    rec.setPhase('validation', { name: 'val9' });
+    rec.showTarget({ id: 'a', group: 'interior', x: 0.5, y: 0.5, set: 'val9' });
+    for (let i = 0; i < 20; i++) frame({ x: 520, y: 500 });
+    rec.hideTarget();
+    rec.selectionTrial({ mode: 'dwell', index: 0, prompted: 'H', promptT: 0, outcome: 'correct', timeMs: 2000, selections: [{ t: 2000, label: 'H', correct: true }] });
+    rec.selectionTrial({ mode: 'blink', index: 0, prompted: 'H', promptT: 0, outcome: 'missed', timeMs: null, selections: [] });
+    rec.restResult({ mode: 'both', durationMs: 120000, activations: [{ t: 1, label: 'Q' }, { t: 2, label: 'W' }] });
+  });
+  const a = M.analyseSession(s);
+  assert.ok(near(a.validation.val9.standard.accuracy.px, 20));
+  assert.equal(a.validation.val16.standard.targets, 0);
+  assert.equal(a.selection.dwell.timeMs, 2000);
+  assert.equal(a.selection.blink.missedPct, 100);
+  assert.equal(a.rest.perMin, 1);
+  // The same analysis on another gaze track (what the replay produces): 50 px off instead of 20.
+  const replayed = s.frames.map(() => ({ x: 550, y: 500 }));
+  assert.ok(near(M.analyseSession(s, { gaze: replayed }).validation.val9.standard.accuracy.px, 50));
 });

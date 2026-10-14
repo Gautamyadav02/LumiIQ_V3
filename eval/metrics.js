@@ -174,11 +174,179 @@
     return { n: steps.length, ...both(Math.sqrt(mean(steps.map((d) => d * d))), geom) };
   }
 
+  // ── Session analysis ───────────────────────────────────────────────
+  // The functions below read a recorded session (eval/session-recorder.js,
+  // format v2). The wizard's on-screen summary and the offline replay both use
+  // them, so a "live" and a "replayed" figure are computed in exactly one way.
+  // `gaze` is one {x, y} (px) or null per frame; by default the smoothed gaze
+  // that was recorded live, but a replay passes its own.
+
+  // Windows after a target appears (ms). "standard" is the calibration timing:
+  // 500 ms for the eye to land, then 1,100 ms. "longSettle" waits 1,100 ms first
+  // (AUDIT L6). Both are cut from the same 2,200 ms showing of each target.
+  const WINDOWS = { standard: [500, 1600], longSettle: [1100, 2200] };
+  const FIXATION_SKIP_MS = 1000;   // the first second of a fixation is the eye arriving
+  const STEADY_TAIL_MS = 700;      // a jump's resting position = mean of its last 700 ms
+  const SETTLE_RADIUS_PX = 60;     // "settled" = within this of the resting position…
+  const SETTLE_HOLD_MS = 300;      // …and staying there this long
+
+  /** The recorded smoothed gaze of every frame. */
+  function recordedGaze(session) {
+    const ix = session.frameFields.indexOf('gazeX'), iy = session.frameFields.indexOf('gazeY');
+    return session.frames.map((f) => (f[ix] == null || f[iy] == null ? null : { x: f[ix], y: f[iy] }));
+  }
+
+  function sessionGeometry(session) {
+    const setup = session.setup || {}, screen = session.screen || {};
+    return geometry({ distanceCm: setup.distanceCm, screenWidthCm: setup.screenWidthCm, screenWidthPx: screen.width });
+  }
+
+  /** Gaze samples of one shown target inside [from, to) ms after it appeared: [{t, x, y}]. */
+  function targetSamples(session, target, window, gaze) {
+    const g = gaze || recordedGaze(session);
+    const it = session.frameFields.indexOf('t');
+    const out = [];
+    const end = target.frame1 == null ? session.frames.length : target.frame1;
+    for (let i = target.frame0; i < end; i++) {
+      const t = session.frames[i][it] - target.t0;
+      if (t >= window[0] && t < window[1] && g[i]) out.push({ t, x: g[i].x, y: g[i].y });
+    }
+    return out;
+  }
+
+  const emptyValidation = () => ({
+    targets: 0, samples: 0, accuracy: { ...none(), x: none(), y: none() },
+    precision: { ...none(), x: none(), y: none() }, p95: none(), perTarget: [],
+  });
+
+  /**
+   * Accuracy, precision and p95 over a set of shown targets.
+   * @param {object} filter  { set?, sets?, groups?, poses? }: which targets to include
+   * @param {number[]} window  [from, to) ms after each target appeared
+   * Accuracy and precision are worked out per target and then averaged over the
+   * targets; p95 is taken over all the samples' errors together.
+   */
+  function validationSummary(session, filter, window, gaze) {
+    const geom = sessionGeometry(session);
+    const screen = session.screen || {};
+    const g = gaze || recordedGaze(session);
+    const sets = filter.sets || (filter.set ? [filter.set] : null);
+    const perTarget = [];
+    const errors = [];
+    for (const target of session.targets || []) {
+      if (sets && !sets.includes(target.set)) continue;
+      if (filter.groups && !filter.groups.includes(target.group)) continue;
+      if (filter.poses && !filter.poses.includes(target.pose)) continue;
+      const samples = targetSamples(session, target, window, g);
+      if (samples.length < 2) continue;                       // nothing usable for this target
+      const at = { x: target.x * screen.width, y: target.y * screen.height };
+      perTarget.push({ id: target.id, group: target.group, set: target.set, pose: target.pose || null,
+                       n: samples.length, accuracy: accuracy(samples, at, geom), precision: precision(samples, geom) });
+      for (const p of samples) errors.push(Math.hypot(p.x - at.x, p.y - at.y));
+    }
+    if (!perTarget.length) return emptyValidation();
+    const avg = (pick) => {
+      const px = meanSd(perTarget.map((t) => pick(t).px)).mean;
+      const deg = meanSd(perTarget.map((t) => pick(t).deg)).mean;
+      return { px, deg };
+    };
+    return {
+      targets: perTarget.length,
+      samples: errors.length,
+      accuracy: { ...avg((t) => t.accuracy), x: avg((t) => t.accuracy.x), y: avg((t) => t.accuracy.y) },
+      precision: { ...avg((t) => t.precision), x: avg((t) => t.precision.x), y: avg((t) => t.precision.y) },
+      p95: both(percentile(errors, 0.95), geom),
+      perTarget,
+    };
+  }
+
+  /** Fixation jitter and settling time measured at one smoothing level. */
+  function lagSummary(session, smoothing, gaze) {
+    const geom = sessionGeometry(session);
+    const g = gaze || recordedGaze(session);
+    const of = (phase) => (session.targets || []).filter((t) => t.phase === phase && t.smoothing === smoothing);
+    const fix = of('fixation')[0];
+    const steady = fix ? targetSamples(session, fix, [FIXATION_SKIP_MS, Infinity], g) : [];
+    const times = [];
+    const jumps = of('jumps');
+    for (const jump of jumps) {
+      const all = targetSamples(session, jump, [0, Infinity], g);
+      if (!all.length) continue;
+      const last = all[all.length - 1].t;
+      const tail = all.filter((p) => p.t >= last - STEADY_TAIL_MS);
+      const rest = { x: mean(tail.map((p) => p.x)), y: mean(tail.map((p) => p.y)) };
+      const t = settlingTime(all, rest, SETTLE_RADIUS_PX, SETTLE_HOLD_MS);
+      if (t != null) times.push(t);
+    }
+    return {
+      smoothing,
+      jitter: fixationJitter(steady, geom),
+      precision: precision(steady, geom),
+      jumps: jumps.length,
+      settled: times.length,
+      settlingMs: times.length ? mean(times) : null,
+      radiusPx: SETTLE_RADIUS_PX,
+    };
+  }
+
+  /** The app's own estimate for a calibration (its quality report), per axis in px and degrees. */
+  function inAppEstimate(session, name) {
+    const geom = sessionGeometry(session);
+    const cal = (session.calibrations || []).filter((c) => c.name === name && c.report && c.report.ok).pop();
+    if (!cal) return null;
+    const rep = cal.report;
+    return { method: rep.cvMethod || null, rating: rep.rating || null, points: cal.points,
+             x: both(rep.rmseXPx != null ? rep.rmseXPx : null, geom), y: both(rep.rmseYPx != null ? rep.rmseYPx : null, geom),
+             combined: both(rep.accuracyPx != null ? rep.accuracyPx : null, geom) };
+  }
+
+  /**
+   * Everything one session measured.
+   * @param {object} [o]  { gaze }: a replayed gaze track instead of the recorded one
+   */
+  function analyseSession(session, o = {}) {
+    const g = o.gaze || recordedGaze(session);
+    const validation = {};
+    for (const set of ['val9', 'val16']) {
+      validation[set] = {
+        standard: validationSummary(session, { set }, WINDOWS.standard, g),
+        longSettle: validationSummary(session, { set }, WINDOWS.longSettle, g),
+        headerRightEdge: validationSummary(session, { set, groups: ['header', 'rightEdge'] }, WINDOWS.standard, g),
+        interior: validationSummary(session, { set, groups: ['interior'] }, WINDOWS.standard, g),
+        corner: validationSummary(session, { set, groups: ['corner'] }, WINDOWS.standard, g),
+      };
+    }
+    const head = {};
+    for (const [name, poses] of [['turn', ['turnLeft', 'turnRight']], ['tilt', ['tiltUp', 'tiltDown']], ['lean', ['leanCloser', 'leanFarther']]]) {
+      head[name] = validationSummary(session, { poses }, WINDOWS.standard, g);
+    }
+    const trials = session.selections || [];
+    const rest = session.rest;
+    const levels = Array.from(new Set((session.targets || []).filter((t) => t.smoothing != null).map((t) => t.smoothing)));
+    const lag = {};
+    for (const level of levels) lag[String(level)] = lagSummary(session, level, g);
+    return {
+      id: session.id,
+      geometry: sessionGeometry(session),
+      validation, head,
+      inApp: { cal9: inAppEstimate(session, 'cal9'), cal16: inAppEstimate(session, 'cal16') },
+      selection: {
+        dwell: selectionSummary(trials.filter((t) => t.mode === 'dwell')),
+        blink: selectionSummary(trials.filter((t) => t.mode === 'blink')),
+      },
+      rest: rest ? { mode: rest.mode || null, durationMs: rest.durationMs, count: (rest.activations || []).length,
+                     perMin: falseActivationsPerMin((rest.activations || []).length, rest.durationMs) }
+                 : { mode: null, durationMs: null, count: null, perMin: null },
+      lag,
+    };
+  }
+
   const api = {
     geometry, pxToDeg, percentile, meanSd,
     accuracy, precision, p95,
     wrongSelections, missedSelections, timePerCorrectSelection, selectionSummary, falseActivationsPerMin,
     settlingTime, fixationJitter,
+    WINDOWS, recordedGaze, sessionGeometry, targetSamples, validationSummary, lagSummary, inAppEstimate, analyseSession,
   };
   root.LumiMetrics = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

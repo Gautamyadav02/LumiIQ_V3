@@ -124,7 +124,8 @@
     setPhase(name, meta = {}) {
       if (!this.recording) return;
       this.endPhase();
-      this._phase = { name, ...copy(meta), t0: r(this._now(), 2), t1: null, frame0: this.session.frames.length, frame1: null };
+      // Extra data first: it can never overwrite the phase's own name, times or frame range.
+      this._phase = { ...copy(meta), name, t0: r(this._now(), 2), t1: null, frame0: this.session.frames.length, frame1: null };
       this.session.phases.push(this._phase);
     }
 
@@ -141,7 +142,7 @@
       if (!this.recording) return;
       this.hideTarget();
       this._target = {
-        phase: this._phase ? this._phase.name : null, id, group: group || null, x, y, ...copy(meta),
+        ...copy(meta), phase: this._phase ? this._phase.name : null, id, group: group || null, x, y,
         t0: r(this._now(), 2), t1: null, frame0: this.session.frames.length, frame1: null,
       };
       this.session.targets.push(this._target);

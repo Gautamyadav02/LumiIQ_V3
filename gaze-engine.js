@@ -98,6 +98,12 @@ const LumiGaze = {
     onCalibrationCollect: null,  // (sampleCount)
     onCalibrationComplete: null, // (report)
     onFrameInfo: null,           // (info) per-frame detection record for the caregiver's diagnostics
+    onCalibrationClear: null,    // () the current calibration point's samples were discarded
+    onCalibrationPoint: null,    // ({index, total, target, samples, accepted, rejected}) a point was committed
+
+    // true while an evaluation session is recording: each frame record then also
+    // carries the landmarks (GazeFeatures.pack) and the head matrix. Never images.
+    captureRaw: false,
 
     // Last per-frame record (see _frameInfo). Passive: nothing in the pipeline reads it.
     lastFrameInfo: null,
@@ -377,7 +383,8 @@ const LumiGaze = {
         if (this.onGazeUpdate) this.onGazeUpdate(null, null, 'none', 'Face not detected', 0);
         const settings = this._cachedSettings || LumiStore.getSettings();
         this._reportFrame({ t: now, face: false, eyes: [], pose: null, confidence: 0, eyeMode: 'none',
-                            earThreshold: settings.earThreshold, raw: null }, 'no_face');
+                            earThreshold: settings.earThreshold, raw: null, features: null, pred: null,
+                            tGaze: null, calSample: false }, 'no_face');
     },
 
     /**
@@ -403,7 +410,19 @@ const LumiGaze = {
             confidence: this.lastConfidence, eyeMode: fx.eyeMode, earThreshold: settings.earThreshold,
             raw: fx.rawRatios || null,   // iris-in-eye ratio of the eyes in use (features' average)
             features: fx.features ? Array.from(fx.features) : null,
+            pred: null,                  // model output in px before smoothing (set when there is one)
+            tGaze: null,                 // the timestamp given to the smoother and the dwell controller
+            calSample: false,            // true: this frame went into the calibration buffer
+            ...(this.captureRaw
+                ? { lm: GazeFeatures.pack(lm), matrix: matrix && matrix.data ? Array.from(matrix.data) : null }
+                : null),
         };
+    },
+
+    /** Call an optional recording hook; a failure there is logged, never thrown. */
+    _emit(name, detail) {
+        try { if (this[name]) this[name](detail); }
+        catch (err) { console.error(`Recording hook ${name} failed:`, err); }
     },
 
     /** Finish a frame record: why it did or did not produce a gaze point (reason), and the point. */
@@ -465,6 +484,7 @@ const LumiGaze = {
         if (this.isCalibrating) {
             if (fx.eyeMode !== 'none' && fx.features) {
                 this._calibRun.addSample(fx.features);
+                info.calSample = true;
                 this.rawRatios = fx.rawRatios;
                 if (this.onCalibrationCollect) this.onCalibrationCollect(this._calibRun.sampleCount());
             }
@@ -496,7 +516,10 @@ const LumiGaze = {
         this.stabilizer.setParams(this._stabilizerParams(settings));
         const px = norm.x * window.innerWidth;
         const py = norm.y * window.innerHeight;
-        const pt = this.stabilizer.process(px, py, performance.now());
+        const now = performance.now();
+        const pt = this.stabilizer.process(px, py, now);
+        info.pred = { x: px, y: py };
+        info.tGaze = now;
 
         this._avgConfidence = GazeFeatures.smoothConfidence(this._avgConfidence, this.lastConfidence);
 
@@ -514,7 +537,6 @@ const LumiGaze = {
 
         const dynamicDwell = settings.dwellTimeMs * GazeFeatures.dwellScale(this._avgConfidence);
 
-        const now = performance.now();
         this._trackSettledTarget(pt, now);
         this.dwell.setParams({
             // "Blink only": the ring fills to show the target is armed; the blink selects.
@@ -739,7 +761,13 @@ const LumiGaze = {
             this.updateStatus('Hold your gaze on the target a moment longer…', 'error');
             return { error: 'insufficient', samples: this._calibRun.sampleCount() };
         }
+        const committed = this._calibRun.currentTarget();
+        const samples = this._calibRun.sampleCount();
         const res = this._calibRun.commitPoint();
+        this._emit('onCalibrationPoint', {
+            index: committed.index, total: committed.total, target: { x: committed.x, y: committed.y },
+            samples, accepted: res.accepted, rejected: res.rejected,
+        });
         if (!res.done) {
             this.calibTarget = res.next;
             this.updateStatus(`Point ${res.next.index} of ${res.next.total} captured.`, 'info');
@@ -780,7 +808,9 @@ const LumiGaze = {
 
     /** Discard the in-transit samples gathered during the settle phase. */
     clearCalibrationSamples() {
-        if (this.isCalibrating && this._calibRun) this._calibRun.discardCurrentSamples();
+        if (!this.isCalibrating || !this._calibRun) return;
+        this._calibRun.discardCurrentSamples();
+        this._emit('onCalibrationClear');
     },
 
     cancelCalibration() {

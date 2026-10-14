@@ -87,7 +87,7 @@ test('a selection says whether dwell or a blink made it', () => {
   const blink = setupEngine({ settings: { selectionMode: 'blink', blinkSelectMs: 500 } });
   feedFrames(blink, 800, EYES_OPEN);                  // rest on the key…
   feedFrames(blink, 700, EYES_CLOSED);                // …close the eyes deliberately…
-  feedFrames(blink, 100, EYES_OPEN);                  // …and open them
+  feedFrames(blink, 150, EYES_OPEN);                  // …and open them (for the 100 ms that confirms it)
   assert.equal(blink.fired.length, 1);
   assert.equal(blink.gaze.lastSelectionBy, 'blink');
 });
